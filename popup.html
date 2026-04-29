@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Instant Answer</title>
+
+  <style>
+    body {
+      width: 340px;
+      padding: 16px;
+      font-family: Arial, sans-serif;
+      background: #f7f7f7;
+    }
+
+    .card {
+      background: white;
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .subtitle {
+      font-size: 12px;
+      color: #777;
+      margin-bottom: 10px;
+    }
+
+    #videoTitle {
+      font-size: 13px;
+      color: #444;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+
+    .pro-status {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 10px;
+    }
+
+    .mode-buttons,
+    .extra-buttons {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .mode-buttons button,
+    .extra-buttons button {
+      flex: 1;
+      padding: 10px 8px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #000, #333);
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    button:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+
+    #result {
+      margin-top: 14px;
+      font-size: 14px;
+      line-height: 1.55;
+      background: #ffffff;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid #eeeeee;
+    }
+
+    .answer-label {
+      font-size: 11px;
+      color: #777;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .answer-title {
+      font-size: 16px;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+
+    .answer-content {
+      color: #111;
+    }
+
+    .loading {
+      text-align: center;
+      font-size: 13px;
+      color: #888;
+    }
+
+    .badge {
+      font-size: 11px;
+      background: #eee;
+      padding: 3px 6px;
+      border-radius: 6px;
+      display: inline-block;
+      margin-bottom: 6px;
+    }
+
+    .pro-box {
+      background: linear-gradient(135deg, #111, #333);
+      color: white;
+      padding: 14px;
+      border-radius: 14px;
+    }
+
+    .pro-label {
+      font-size: 11px;
+      opacity: 0.75;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .pro-title {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .pro-text {
+      font-size: 13px;
+      line-height: 1.5;
+      opacity: 0.9;
+      margin-bottom: 12px;
+    }
+
+    .pro-features {
+      font-size: 13px;
+      line-height: 1.7;
+      margin-bottom: 12px;
+    }
+
+    .upgrade-btn {
+      width: 100%;
+      padding: 11px;
+      border: none;
+      border-radius: 10px;
+      background: white;
+      color: black;
+      font-weight: bold;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="card">
+    <div class="badge">AI Assistant</div>
+    <h2>Instant Answer</h2>
+    <div class="subtitle">Understand anything in seconds</div>
+
+    <div id="proStatus" class="pro-status">Free plan</div>
+
+    <p id="videoTitle">Reading page...</p>
+
+    <div class="mode-buttons">
+      <button id="quickBtn">Quick</button>
+      <button id="deepBtn">Deep</button>
+      <button id="studyBtn">Study</button>
+    </div>
+
+    <div class="extra-buttons">
+      <button id="historyBtn">History</button>
+      <button id="clearHistoryBtn">Clear</button>
+    </div>
+
+    <div id="result"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

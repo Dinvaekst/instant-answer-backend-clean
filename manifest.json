@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Instant Answer",
+  "version": "1.0",
+  "description": "Get instant answers",
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "permissions": ["activeTab", "scripting"]
+}
