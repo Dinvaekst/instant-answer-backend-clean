@@ -85,9 +85,162 @@ app.post("/check-pro", (req, res) => {
 });
 
 function buildPrompt(mode, input, isPro) {
+  const qualityRule = isPro
+    ? `
+Pro user:
+- Give a stronger, deeper and more helpful answer.
+- Give better explanations.
+- Give better school help.
+- Use more structure.
+- Include examples when useful.
+`
+    : `
+Free user:
+- Keep the answer useful but shorter.
+- Give clear help without going too deep.
+`;
+
+  if (mode === "chat") {
+    return `
+You are Instant Answer Chat.
+
+${qualityRule}
+
+Goal:
+Help the user with questions, homework, explanations, text, structure and ideas.
+
+Rules:
+- Follow the language rule inside the user's input.
+- Be clear and useful.
+- Do not invent facts.
+- If page context exists, use it when relevant.
+- If the user asks a school question, help them understand instead of cheating.
+- Give practical answers.
+
+Format:
+Answer:
+[clear answer]
+
+Useful next step:
+[what the user can do next]
+
+Input:
+${input}
+`;
+  }
+
+  if (mode === "assignment") {
+    return `
+You are Instant Answer Assignment Helper.
+
+${qualityRule}
+
+Goal:
+The user pastes an assignment. Explain exactly how to start.
+
+Rules:
+- Follow the language rule inside the user's input.
+- Do not write a full cheating-ready assignment.
+- Help the user understand what to do.
+- Make it simple and structured.
+
+Format:
+What the assignment requires:
+[explain the task]
+
+How to start:
+[clear first steps]
+
+Disposition:
+1. [section]
+2. [section]
+3. [section]
+
+Example formulation:
+[short example sentence or paragraph]
+
+Tips:
+• [tip]
+• [tip]
+• [tip]
+
+Input:
+${input}
+`;
+  }
+
+  if (mode === "improve") {
+    return `
+You are Instant Answer Improve Text.
+
+${qualityRule}
+
+Goal:
+Improve the user's text.
+
+Rules:
+- Follow the language rule inside the user's input.
+- Keep the original meaning.
+- Correct errors.
+- Make the text more natural and human.
+- Do not make it sound too robotic.
+
+Format:
+Improved version:
+[better version of the text]
+
+What I improved:
+• [improvement]
+• [improvement]
+• [improvement]
+
+Input:
+${input}
+`;
+  }
+
+  if (mode === "feedback") {
+    return `
+You are Instant Answer Teacher Feedback.
+
+${qualityRule}
+
+Goal:
+Give teacher-style feedback on the user's text or answer.
+
+Rules:
+- Follow the language rule inside the user's input.
+- Be honest but helpful.
+- Explain what is good and what is missing.
+- Give concrete ways to improve.
+
+Format:
+What is good:
+• [point]
+• [point]
+
+What is missing:
+• [point]
+• [point]
+
+How it becomes better:
+1. [advice]
+2. [advice]
+3. [advice]
+
+Example improvement:
+[short improved example if useful]
+
+Input:
+${input}
+`;
+  }
+
   if (mode === "quick") {
     return `
 You are Instant Answer.
+
+${qualityRule}
 
 Goal:
 Give the user a fast, useful answer.
@@ -115,7 +268,9 @@ ${input}
 
   if (mode === "deep") {
     return `
-You are Instant Answer Pro.
+You are Instant Answer Pro-style Explainer.
+
+${qualityRule}
 
 Goal:
 Help the user understand the page/video/search better than a normal summary.
@@ -124,7 +279,7 @@ Rules:
 - Do not invent facts.
 - Use only the provided content.
 - If transcript/content is missing, explain the topic behind the title/search if it is clear.
-- Give practical value, not generic text.
+- Give practical value.
 - Write in a clean, premium style.
 
 Format:
@@ -132,13 +287,12 @@ Overview:
 [Clear explanation]
 
 What it means:
-[Simple explanation of the topic]
+[Simple explanation]
 
 Why it matters:
 [Why the user should care]
 
 Key takeaways:
-• [useful point]
 • [useful point]
 • [useful point]
 • [useful point]
@@ -154,6 +308,8 @@ ${input}
   if (mode === "study") {
     return `
 You are a premium Study Assistant.
+
+${qualityRule}
 
 Goal:
 Help the user learn and use the information for school, homework or studying.
@@ -182,19 +338,51 @@ Notes to remember:
 • [note]
 • [note]
 • [note]
-• [note]
 
 Content:
 ${input}
 `;
   }
 
-  return `Explain this clearly and usefully:\n${input}`;
+  return `
+Explain this clearly and usefully.
+
+${qualityRule}
+
+Input:
+${input}
+`;
+}
+
+function getMaxTokens(mode, isPro) {
+  if (isPro) {
+    if (mode === "quick") return 260;
+    if (mode === "chat") return 900;
+    if (mode === "assignment") return 1100;
+    if (mode === "improve") return 1100;
+    if (mode === "feedback") return 1000;
+    if (mode === "study") return 1100;
+    if (mode === "deep") return 1100;
+    return 900;
+  }
+
+  if (mode === "quick") return 140;
+  if (mode === "chat") return 430;
+  if (mode === "assignment") return 520;
+  if (mode === "improve") return 520;
+  if (mode === "feedback") return 500;
+  if (mode === "study") return 520;
+  if (mode === "deep") return 520;
+  return 430;
 }
 
 app.post("/ask", async (req, res) => {
   try {
-    const { input, mode, deviceId } = req.body;
+    const { input, mode = "chat", deviceId } = req.body;
+
+    if (!input) {
+      return res.status(400).json({ error: "Missing input" });
+    }
 
     const isPro = isProUser(deviceId);
     const prompt = buildPrompt(mode, input, isPro);
@@ -202,19 +390,13 @@ app.post("/ask", async (req, res) => {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: isPro ? 0.18 : 0.35,
-      max_tokens: isPro
-        ? mode === "quick"
-          ? 220
-          : 900
-        : mode === "quick"
-          ? 130
-          : 430,
+      max_tokens: getMaxTokens(mode, isPro),
       messages: [
         {
           role: "system",
           content: isPro
-            ? "You are a premium AI assistant. Give high-quality, clear, useful answers. Never invent facts. Follow the user's language rule if provided."
-            : "You are a helpful AI assistant. Keep answers shorter for free users. Never invent facts. Follow the user's language rule if provided."
+            ? "You are Instant Answer Pro. Give premium, clear, structured and useful answers. Help better with school, text, assignments and explanations. Never invent facts. Follow the user's language rule if provided."
+            : "You are Instant Answer Free. Give helpful but shorter answers. Never invent facts. Follow the user's language rule if provided."
         },
         {
           role: "user",
