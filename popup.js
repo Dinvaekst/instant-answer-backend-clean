@@ -40,6 +40,79 @@ function formatAnswer(text = "") {
   return escapeHTML(text).replace(/\n/g, "<br>");
 }
 
+function getDownloadPDFLabel() {
+  if (userLanguage.startsWith("da")) return "Download PDF";
+  if (userLanguage.startsWith("tr")) return "PDF indir";
+  if (userLanguage.startsWith("de")) return "PDF herunterladen";
+  if (userLanguage.startsWith("fr")) return "Télécharger PDF";
+  if (userLanguage.startsWith("es")) return "Descargar PDF";
+  return "Download PDF";
+}
+
+function downloadLastAnswerAsPDF() {
+  const lastAnswer = [...chatMessages].reverse().find(msg => msg.role === "assistant");
+
+  if (!lastAnswer) {
+    alert("No AI answer found yet.");
+    return;
+  }
+
+  const cleanText = escapeHTML(lastAnswer.content).replace(/\n/g, "<br>");
+  const printWindow = window.open("", "_blank");
+
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Instant Answer PDF</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            padding: 40px;
+            line-height: 1.6;
+            color: #111;
+          }
+
+          h1 {
+            font-size: 22px;
+            margin-bottom: 20px;
+          }
+
+          .content {
+            font-size: 14px;
+            white-space: normal;
+          }
+
+          .footer {
+            margin-top: 40px;
+            font-size: 11px;
+            color: #777;
+          }
+
+          @media print {
+            button {
+              display: none;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <h1>Instant Answer</h1>
+        <div class="content">${cleanText}</div>
+        <div class="footer">Generated with Instant Answer</div>
+
+        <script>
+          window.onload = function() {
+            window.print();
+          };
+        </script>
+      </body>
+    </html>
+  `);
+
+  printWindow.document.close();
+}
+
 function getChatPlaceholder() {
   if (activeChatTool === "assignment") {
     if (userLanguage.startsWith("da")) return "Indsæt din opgave her...";
@@ -297,6 +370,18 @@ document.addEventListener("DOMContentLoaded", async () => {
           cursor: pointer;
         ">${getSendLabel()}</button>
 
+        <button id="downloadPdfBtn" style="
+          width: 100%;
+          margin-top: 8px;
+          padding: 10px;
+          border: none;
+          border-radius: 10px;
+          background: #111;
+          color: white;
+          font-weight: bold;
+          cursor: pointer;
+        ">${getDownloadPDFLabel()}</button>
+
         <button id="clearChatBtn" style="
           width: 100%;
           margin-top: 8px;
@@ -327,6 +412,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     };
 
     document.getElementById("sendChatBtn").onclick = sendChatMessage;
+    document.getElementById("downloadPdfBtn").onclick = downloadLastAnswerAsPDF;
 
     document.getElementById("clearChatBtn").onclick = () => {
       clearChatMessages();
