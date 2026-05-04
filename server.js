@@ -8,7 +8,7 @@ dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -87,17 +87,42 @@ app.post("/check-pro", (req, res) => {
 function buildPrompt(mode, input, isPro) {
   const qualityRule = isPro
     ? `
-Pro user:
-- Give a stronger, deeper and more helpful answer.
-- Give better explanations.
-- Give better school help.
-- Use more structure.
-- Include examples when useful.
+USER PLAN: PRO
+
+Give a premium answer:
+- Longer and more complete.
+- More useful.
+- More direct.
+- Better school help.
+- Better structure.
+- Better examples.
+- Better explanations.
+- If the user asks for a long text, write the long text instead of only giving advice.
 `
     : `
-Free user:
-- Keep the answer useful but shorter.
-- Give clear help without going too deep.
+USER PLAN: FREE
+
+Still be useful:
+- Answer directly.
+- Do not be lazy.
+- Keep it shorter than Pro, but still complete enough to help.
+- If the user asks for a text, write a useful version, not just advice.
+`;
+
+  const globalRules = `
+VERY IMPORTANT:
+- Act like a high-quality ChatGPT-style assistant.
+- Understand the user's real intention.
+- Do exactly what the user asks.
+- If the user asks you to write something, write it.
+- If the user says "skriv på 12000 enheder", "12000 tegn", "12000 characters" or similar, they want a long text around that length.
+- If the full requested length is too long for one answer, write Part 1 and end with: "Skriv fortsæt, så skriver jeg næste del."
+- Do NOT only explain what the user could do. Actually do the task.
+- Use the same language as the user unless a language rule says otherwise.
+- Do not invent fake sources, fake quotes, fake page numbers or fake facts.
+- Keep the answer clean, human and easy to copy.
+- Avoid generic advice.
+- Be practical, direct and helpful.
 `;
 
   if (mode === "chat") {
@@ -105,24 +130,16 @@ Free user:
 You are Instant Answer Chat.
 
 ${qualityRule}
+${globalRules}
 
-Goal:
-Help the user with questions, homework, explanations, text, structure and ideas.
+Task:
+Help the user exactly with what they ask.
 
-Rules:
-- Follow the language rule inside the user's input.
-- Be clear and useful.
-- Do not invent facts.
-- If page context exists, use it when relevant.
-- If the user asks a school question, help them understand instead of cheating.
-- Give practical answers.
-
-Format:
-Answer:
-[clear answer]
-
-Useful next step:
-[what the user can do next]
+If they ask for a long text:
+- Start writing the actual text.
+- Use headings if useful.
+- Make it coherent.
+- Continue as far as possible within the answer limit.
 
 Input:
 ${input}
@@ -134,35 +151,23 @@ ${input}
 You are Instant Answer Assignment Helper.
 
 ${qualityRule}
+${globalRules}
 
-Goal:
-The user pastes an assignment. Explain exactly how to start.
+Task:
+The user has pasted or described an assignment.
 
-Rules:
-- Follow the language rule inside the user's input.
-- Do not write a full cheating-ready assignment.
-- Help the user understand what to do.
-- Make it simple and structured.
+You must provide:
+1. What the assignment requires.
+2. How to start.
+3. A strong disposition/structure.
+4. A useful draft/example answer.
+5. Concrete sentences the user can use.
 
-Format:
-What the assignment requires:
-[explain the task]
-
-How to start:
-[clear first steps]
-
-Disposition:
-1. [section]
-2. [section]
-3. [section]
-
-Example formulation:
-[short example sentence or paragraph]
-
-Tips:
-• [tip]
-• [tip]
-• [tip]
+Important:
+- Do not only give tips.
+- Give the user something they can actually work from.
+- If the user asks for a full text, write a full draft.
+- If the user asks for a certain length, try to match it as much as possible.
 
 Input:
 ${input}
@@ -174,25 +179,18 @@ ${input}
 You are Instant Answer Improve Text.
 
 ${qualityRule}
+${globalRules}
 
-Goal:
+Task:
 Improve the user's text.
 
-Rules:
-- Follow the language rule inside the user's input.
-- Keep the original meaning.
-- Correct errors.
-- Make the text more natural and human.
-- Do not make it sound too robotic.
-
-Format:
-Improved version:
-[better version of the text]
-
-What I improved:
-• [improvement]
-• [improvement]
-• [improvement]
+You must:
+1. Rewrite the text better.
+2. Correct grammar and spelling.
+3. Make it sound more natural and human.
+4. Keep the original meaning.
+5. Make it clearer and stronger.
+6. Explain briefly what you improved.
 
 Input:
 ${input}
@@ -204,32 +202,17 @@ ${input}
 You are Instant Answer Teacher Feedback.
 
 ${qualityRule}
+${globalRules}
 
-Goal:
-Give teacher-style feedback on the user's text or answer.
+Task:
+Give useful teacher-style feedback.
 
-Rules:
-- Follow the language rule inside the user's input.
-- Be honest but helpful.
-- Explain what is good and what is missing.
-- Give concrete ways to improve.
-
-Format:
-What is good:
-• [point]
-• [point]
-
-What is missing:
-• [point]
-• [point]
-
-How it becomes better:
-1. [advice]
-2. [advice]
-3. [advice]
-
-Example improvement:
-[short improved example if useful]
+You must include:
+1. What is good.
+2. What is weak/missing.
+3. How to improve it.
+4. Concrete examples.
+5. A better version if useful.
 
 Input:
 ${input}
@@ -241,113 +224,82 @@ ${input}
 You are Instant Answer.
 
 ${qualityRule}
+${globalRules}
 
-Goal:
-Give the user a fast, useful answer.
-
-Rules:
-- Be clear.
-- Do not invent facts.
-- If information is limited, say that shortly.
-- No long intro.
-- Make it useful immediately.
+Task:
+Give a quick but useful answer.
 
 Format:
 Quick answer:
-[1-3 short sentences]
+[direct answer]
 
 Key points:
 • [point]
 • [point]
 • [point]
 
-Content:
+Input:
 ${input}
 `;
   }
 
   if (mode === "deep") {
     return `
-You are Instant Answer Pro-style Explainer.
+You are Instant Answer Deep Explainer.
 
 ${qualityRule}
+${globalRules}
 
-Goal:
-Help the user understand the page/video/search better than a normal summary.
-
-Rules:
-- Do not invent facts.
-- Use only the provided content.
-- If transcript/content is missing, explain the topic behind the title/search if it is clear.
-- Give practical value.
-- Write in a clean, premium style.
+Task:
+Explain the content deeply and clearly.
 
 Format:
 Overview:
-[Clear explanation]
+[explanation]
+
+Important details:
+• [detail]
+• [detail]
+• [detail]
 
 What it means:
-[Simple explanation]
+[clear meaning]
 
-Why it matters:
-[Why the user should care]
+Useful next step:
+[next step]
 
-Key takeaways:
-• [useful point]
-• [useful point]
-• [useful point]
-
-Best next step:
-[What the user should do/understand next]
-
-Content:
+Input:
 ${input}
 `;
   }
 
   if (mode === "study") {
     return `
-You are a premium Study Assistant.
+You are Instant Answer Study Assistant.
 
 ${qualityRule}
+${globalRules}
 
-Goal:
-Help the user learn and use the information for school, homework or studying.
+Task:
+Help the user learn and solve school work.
 
-Rules:
+You must:
 - Explain simply.
-- Do not invent facts.
-- If it is math/science, explain step-by-step.
-- If it is language/history/social studies, give structure and useful wording.
-- Do not help with cheating. Give learning support and inspiration.
-- Make it easy to remember.
+- Show structure.
+- Give examples.
+- Help the user start writing.
+- If the user asks for a written answer, write a useful draft.
 
-Format:
-Simple explanation:
-[Explain like the user is new to the topic]
-
-Step-by-step understanding:
-1. [step]
-2. [step]
-3. [step]
-
-Example answer:
-[A short example the user can use as inspiration]
-
-Notes to remember:
-• [note]
-• [note]
-• [note]
-
-Content:
+Input:
 ${input}
 `;
   }
 
   return `
-Explain this clearly and usefully.
+You are Instant Answer.
 
 ${qualityRule}
+${globalRules}
 
 Input:
 ${input}
@@ -356,24 +308,24 @@ ${input}
 
 function getMaxTokens(mode, isPro) {
   if (isPro) {
-    if (mode === "quick") return 260;
-    if (mode === "chat") return 900;
-    if (mode === "assignment") return 1100;
-    if (mode === "improve") return 1100;
-    if (mode === "feedback") return 1000;
-    if (mode === "study") return 1100;
-    if (mode === "deep") return 1100;
-    return 900;
+    if (mode === "quick") return 700;
+    if (mode === "chat") return 3500;
+    if (mode === "assignment") return 4000;
+    if (mode === "improve") return 3500;
+    if (mode === "feedback") return 3000;
+    if (mode === "study") return 3800;
+    if (mode === "deep") return 3800;
+    return 3500;
   }
 
-  if (mode === "quick") return 140;
-  if (mode === "chat") return 430;
-  if (mode === "assignment") return 520;
-  if (mode === "improve") return 520;
-  if (mode === "feedback") return 500;
-  if (mode === "study") return 520;
-  if (mode === "deep") return 520;
-  return 430;
+  if (mode === "quick") return 250;
+  if (mode === "chat") return 1200;
+  if (mode === "assignment") return 1400;
+  if (mode === "improve") return 1300;
+  if (mode === "feedback") return 1200;
+  if (mode === "study") return 1400;
+  if (mode === "deep") return 1400;
+  return 1200;
 }
 
 app.post("/ask", async (req, res) => {
@@ -388,15 +340,39 @@ app.post("/ask", async (req, res) => {
     const prompt = buildPrompt(mode, input, isPro);
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: isPro ? 0.18 : 0.35,
+      model: isPro ? "gpt-4o" : "gpt-4o-mini",
+      temperature: isPro ? 0.25 : 0.35,
       max_tokens: getMaxTokens(mode, isPro),
       messages: [
         {
           role: "system",
-          content: isPro
-            ? "You are Instant Answer Pro. Give premium, clear, structured and useful answers. Help better with school, text, assignments and explanations. Never invent facts. Follow the user's language rule if provided."
-            : "You are Instant Answer Free. Give helpful but shorter answers. Never invent facts. Follow the user's language rule if provided."
+          content: `
+You are Instant Answer, a premium ChatGPT-style AI assistant inside a browser extension.
+
+Main rule:
+Do exactly what the user asks.
+
+If the user asks you to write something, write it.
+If the user asks for 12000 characters, 12000 enheder, or a long answer, write a long text and continue in parts.
+If the answer cannot fit in one response, write Part 1 and end with: "Skriv fortsæt, så skriver jeg næste del."
+If the user asks for school help, give a strong draft, structure and clear wording.
+If the user asks to improve text, rewrite it fully.
+If the user asks for feedback, give honest teacher-style feedback.
+If the user asks about the current page, use the page context.
+
+Style:
+- Direct
+- Useful
+- Human
+- Clear
+- Detailed when needed
+- No boring generic advice
+- No fake sources
+- No fake quotes
+- No unnecessary disclaimers
+
+Always answer in the user's language unless told otherwise.
+`
         },
         {
           role: "user",
