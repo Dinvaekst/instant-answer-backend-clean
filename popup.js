@@ -40,6 +40,10 @@ function formatAnswer(text = "") {
   return escapeHTML(text).replace(/\n/g, "<br>");
 }
 
+function cleanText(text = "", limit = 12000) {
+  return text.replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
 function getDownloadPDFLabel() {
   if (userLanguage.startsWith("da")) return "Download PDF";
   if (userLanguage.startsWith("tr")) return "PDF indir";
@@ -57,7 +61,7 @@ function downloadLastAnswerAsPDF() {
     return;
   }
 
-  const cleanText = escapeHTML(lastAnswer.content).replace(/\n/g, "<br>");
+  const cleanTextForPdf = escapeHTML(lastAnswer.content).replace(/\n/g, "<br>");
   const printWindow = window.open("", "_blank");
 
   printWindow.document.write(`
@@ -72,23 +76,19 @@ function downloadLastAnswerAsPDF() {
             line-height: 1.6;
             color: #111;
           }
-
           h1 {
             font-size: 22px;
             margin-bottom: 20px;
           }
-
           .content {
             font-size: 14px;
             white-space: normal;
           }
-
           .footer {
             margin-top: 40px;
             font-size: 11px;
             color: #777;
           }
-
           @media print {
             button {
               display: none;
@@ -98,9 +98,8 @@ function downloadLastAnswerAsPDF() {
       </head>
       <body>
         <h1>Instant Answer</h1>
-        <div class="content">${cleanText}</div>
+        <div class="content">${cleanTextForPdf}</div>
         <div class="footer">Generated with Instant Answer</div>
-
         <script>
           window.onload = function() {
             window.print();
@@ -127,6 +126,16 @@ function getChatPlaceholder() {
   if (activeChatTool === "feedback") {
     if (userLanguage.startsWith("da")) return "Indsæt din tekst og få feedback...";
     return "Paste your text and get feedback...";
+  }
+
+  if (activeChatTool === "math") {
+    if (userLanguage.startsWith("da")) return "Indsæt din matematikopgave her...";
+    return "Paste your math problem here...";
+  }
+
+  if (activeChatTool === "analyze") {
+    if (userLanguage.startsWith("da")) return "Spørg om siden, teksten, videoen eller artiklen...";
+    return "Ask about the page, text, video or article...";
   }
 
   if (userLanguage.startsWith("da")) return "Skriv dit spørgsmål...";
@@ -295,7 +304,8 @@ document.addEventListener("DOMContentLoaded", async () => {
           Better summaries<br>
           Faster responses<br>
           Study mode access<br>
-          AI chat access
+          AI chat access<br>
+          Advanced math help
         </div>
         <button class="upgrade-btn" id="upgradeBtn">Upgrade to Pro</button>
       </div>
@@ -329,10 +339,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         <div class="answer-label">CHAT</div>
         <div class="answer-title">Instant Answer Chat</div>
 
-        <div style="display:flex; gap:6px; margin-bottom:10px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:10px;">
           <button id="assignmentBtn" style="${getToolButtonStyle("assignment")}">Assignment</button>
           <button id="improveBtn" style="${getToolButtonStyle("improve")}">Improve</button>
           <button id="feedbackBtn" style="${getToolButtonStyle("feedback")}">Feedback</button>
+          <button id="mathBtn" style="${getToolButtonStyle("math")}">Math</button>
+          <button id="analyzeBtn" style="${getToolButtonStyle("analyze")}">Analyze page</button>
+          <button id="normalBtn" style="${getToolButtonStyle("normal")}">Normal</button>
         </div>
 
         <div id="chatMessages" style="
@@ -347,7 +360,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         <textarea id="chatInput" placeholder="${getChatPlaceholder()}" style="
           width: 100%;
-          height: 80px;
+          height: 90px;
           resize: none;
           box-sizing: border-box;
           border: 1px solid #ddd;
@@ -397,17 +410,32 @@ document.addEventListener("DOMContentLoaded", async () => {
     `;
 
     document.getElementById("assignmentBtn").onclick = () => {
-      activeChatTool = activeChatTool === "assignment" ? "normal" : "assignment";
+      activeChatTool = "assignment";
       openChat();
     };
 
     document.getElementById("improveBtn").onclick = () => {
-      activeChatTool = activeChatTool === "improve" ? "normal" : "improve";
+      activeChatTool = "improve";
       openChat();
     };
 
     document.getElementById("feedbackBtn").onclick = () => {
-      activeChatTool = activeChatTool === "feedback" ? "normal" : "feedback";
+      activeChatTool = "feedback";
+      openChat();
+    };
+
+    document.getElementById("mathBtn").onclick = () => {
+      activeChatTool = "math";
+      openChat();
+    };
+
+    document.getElementById("analyzeBtn").onclick = () => {
+      activeChatTool = "analyze";
+      openChat();
+    };
+
+    document.getElementById("normalBtn").onclick = () => {
+      activeChatTool = "normal";
       openChat();
     };
 
@@ -418,6 +446,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       clearChatMessages();
       openChat();
     };
+
+    const chatInput = document.getElementById("chatInput");
+    chatInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendChatMessage();
+      }
+    });
 
     const chatMessagesBox = document.getElementById("chatMessages");
     chatMessagesBox.scrollTop = chatMessagesBox.scrollHeight;
@@ -460,12 +496,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       return `
 Special mode: Assignment helper.
 
-Explain:
-1. What the assignment requires.
-2. How the student should start.
-3. A clear disposition/structure.
-4. An example sentence/formulation.
-5. Keep it easy and useful.
+You must:
+1. Explain what the assignment requires.
+2. Show how to start.
+3. Make a clear disposition/structure.
+4. Give example formulations.
+5. If the user asks for a full text, write a strong draft.
+6. If the assignment involves math, solve it step-by-step.
 `;
     }
 
@@ -473,7 +510,7 @@ Explain:
       return `
 Special mode: Improve text.
 
-Do this:
+You must:
 1. Correct mistakes.
 2. Improve the text.
 3. Make it sound more natural and human.
@@ -486,12 +523,60 @@ Do this:
       return `
 Special mode: Teacher feedback.
 
-Give feedback:
-1. What is good.
-2. What is missing.
-3. What can be improved.
-4. Concrete suggestions.
-5. A better version if useful.
+You must:
+1. Explain what is good.
+2. Explain what is missing.
+3. Explain how it becomes better.
+4. Give concrete suggestions.
+5. Give a better version if useful.
+`;
+    }
+
+    if (tool === "math") {
+      return `
+Special mode: Expert math tutor.
+
+You are an expert in mathematics.
+
+You must:
+1. Solve math problems step-by-step.
+2. Show formulas clearly.
+3. Explain why each step is done.
+4. Check the final answer.
+5. Use simple language.
+6. If the user gives an equation, solve it fully.
+7. If the user gives a word problem, identify known values, unknown value, formula, calculation and answer.
+8. If the user asks for graph/function help, explain domain, range, slope, intercepts, roots or behavior when relevant.
+9. If something is unclear, make the best reasonable assumption and continue.
+10. Do not skip steps.
+`;
+    }
+
+    if (tool === "analyze") {
+      return `
+Special mode: Analyze page.
+
+You must analyze the current page context.
+
+If it is YouTube:
+- Summarize the video from title, description and visible comments.
+- Explain the topic.
+- Make notes.
+- Identify key points and possible message.
+
+If it is Google:
+- Answer the search query directly using visible results.
+- Compare results.
+- Explain what the user should understand.
+
+If it is Reddit:
+- Summarize post and comments.
+- Identify opinions, advice, disagreement and key points.
+
+If it is article/webpage/essay/novel:
+- Summarize.
+- Analyze theme, message, structure, arguments, language and important points.
+- If it looks like school text, help like a teacher.
 `;
     }
 
@@ -499,6 +584,8 @@ Give feedback:
 Special mode: Normal chat.
 
 Answer the user's question clearly and helpfully.
+If it is math, solve it step-by-step.
+If it is school work, give structure and useful wording.
 `;
   }
 
@@ -533,7 +620,7 @@ Answer the user's question clearly and helpfully.
 
     try {
       const chatContext = chatMessages
-        .slice(-8)
+        .slice(-10)
         .map(msg => `${msg.role.toUpperCase()}: ${msg.content}`)
         .join("\n");
 
@@ -552,10 +639,16 @@ You help with:
 - ideas
 - assignment help
 - teacher-style feedback
+- mathematics at expert tutor level
+- YouTube analysis
+- Google search analysis
+- Reddit analysis
+- article, essay, short story and novel analysis
 
 Current browser page context:
 Page type: ${currentPageType || "unknown"}
 Page label: ${currentPageLabel || "unknown"}
+
 Page content:
 ${currentPageText || "No page context available."}
 
@@ -572,11 +665,15 @@ User's latest message:
 ${userMessage}
 
 Rules:
-- Answer clearly.
-- Be useful.
-- Keep it easy to understand.
+- Answer exactly what the user asks.
+- Do the task, not just explain what to do.
+- If it is math, solve step-by-step with formulas and final answer.
+- If it is a school assignment, give structure, explanation and useful draft.
 - If the user asks about the current page, use the page context.
+- If the user asks to analyze an article, essay, novel or short story, include theme, message, structure, language and examples.
+- If the user asks to analyze YouTube, Google or Reddit, use the available page data.
 - Do not say you cannot see the page if page context exists.
+- Keep it clear, useful and human.
 `;
 
       const response = await fetch(ASK_URL, {
@@ -739,7 +836,10 @@ Important:
 - If the page content is short, explain the topic behind it.
 - If it is a search query, answer the search question directly.
 - If it is a school topic, explain it clearly.
+- If it is math, solve step-by-step.
 - If it is Reddit, summarize the post and visible comments.
+- If it is YouTube, analyze title, description and comments.
+- If it is an article, essay, novel or short story, analyze it deeply.
 - Always give useful value.
 - Keep the answer clear and easy to understand.
 
@@ -801,48 +901,90 @@ ${currentPageText}
 async function getPageInfo() {
   const url = window.location.href;
 
+  function clean(text = "", limit = 12000) {
+    return text
+      .replace(/\s+/g, " ")
+      .replace(/Cookie|Accept all|Sign in|Log in/gi, "")
+      .trim()
+      .slice(0, limit);
+  }
+
   if (url.includes("youtube.com/watch")) {
     const title =
       document.querySelector("h1 yt-formatted-string")?.innerText ||
       document.querySelector("h1")?.innerText ||
       document.title;
 
+    const channel =
+      document.querySelector("#owner-name a")?.innerText ||
+      document.querySelector("ytd-channel-name a")?.innerText ||
+      "";
+
     const description =
       document.querySelector("#description-inline-expander")?.innerText ||
       document.querySelector("#description")?.innerText ||
       "";
 
+    const comments = Array.from(document.querySelectorAll("#content-text"))
+      .slice(0, 12)
+      .map(comment => comment.innerText)
+      .join("\n\n");
+
     return {
       type: "youtube",
       label: title.slice(0, 60),
       text: `
-YouTube title:
-${title}
+PAGE TYPE:
+YouTube video
 
-Description:
-${description || "No visible description found."}
+TASK HELP:
+The AI should summarize, explain, analyze, make notes, make study points and answer questions about this video based on available page context.
+
+VIDEO TITLE:
+${clean(title)}
+
+CHANNEL:
+${clean(channel)}
+
+DESCRIPTION:
+${clean(description || "No visible description found.")}
+
+VISIBLE COMMENTS:
+${clean(comments || "No visible comments found.")}
 `
     };
   }
 
   if (url.includes("google.") && url.includes("/search")) {
-    const searchInput = document.querySelector("textarea[name='q'], input[name='q']");
-    const query = searchInput ? searchInput.value : document.title.replace(" - Google Search", "");
+    const query =
+      document.querySelector("textarea[name='q'], input[name='q']")?.value ||
+      document.title.replace(" - Google Search", "");
 
-    const resultTexts = Array.from(document.querySelectorAll("h3"))
-      .slice(0, 8)
-      .map(item => item.innerText)
-      .join("\n");
+    const results = Array.from(document.querySelectorAll("div.g, [data-sokoban-container]"))
+      .slice(0, 10)
+      .map((item, index) => {
+        const title = item.querySelector("h3")?.innerText || "";
+        const text = item.innerText || "";
+        return `Result ${index + 1}:\n${title}\n${text}`;
+      })
+      .filter(Boolean)
+      .join("\n\n");
 
     return {
       type: "google_search",
       label: `Google: ${query}`.slice(0, 60),
       text: `
-Google search query:
-${query}
+PAGE TYPE:
+Google search results
 
-Visible search results:
-${resultTexts || "No visible results found."}
+TASK HELP:
+The AI should answer the search query directly using visible results. It should compare results, explain the topic and give a clear useful answer.
+
+SEARCH QUERY:
+${clean(query)}
+
+VISIBLE RESULTS:
+${clean(results || "No visible results found.")}
 `
     };
   }
@@ -859,39 +1001,66 @@ ${resultTexts || "No visible results found."}
       "";
 
     const comments = Array.from(document.querySelectorAll('[data-testid="comment"], shreddit-comment'))
-      .slice(0, 8)
+      .slice(0, 12)
       .map(comment => comment.innerText)
-      .join("\n\n")
-      .slice(0, 5000);
+      .join("\n\n");
 
     return {
       type: "reddit",
       label: `Reddit: ${title.slice(0, 50)}`,
       text: `
-Reddit post title:
-${title}
+PAGE TYPE:
+Reddit discussion
 
-Post content:
-${postText || "No post text found."}
+TASK HELP:
+The AI should summarize the post, explain the discussion, identify opinions, arguments, advice and key points from visible comments.
 
-Top visible comments:
-${comments || "No comments found."}
+POST TITLE:
+${clean(title)}
+
+POST CONTENT:
+${clean(postText || "No post text found.")}
+
+VISIBLE COMMENTS:
+${clean(comments || "No comments found.")}
 `
     };
   }
 
   const pageTitle = document.title || "Current page";
-  const bodyText = document.body?.innerText?.slice(0, 5000) || "";
+
+  const headings = Array.from(document.querySelectorAll("h1, h2, h3"))
+    .map(h => h.innerText)
+    .filter(Boolean)
+    .slice(0, 25)
+    .join("\n");
+
+  const articleText = Array.from(document.querySelectorAll("article p, main p, p"))
+    .map(p => p.innerText)
+    .filter(text => text && text.length > 30)
+    .join("\n\n");
+
+  const bodyText = document.body?.innerText || "";
+  const bestText = articleText.length > 500 ? articleText : bodyText;
 
   return {
-    type: "webpage",
+    type: "article_or_webpage",
     label: pageTitle.slice(0, 60),
     text: `
-Page title:
-${pageTitle}
+PAGE TYPE:
+Article / webpage / school text
 
-Visible page text:
-${bodyText || "No visible text found."}
+TASK HELP:
+The AI should summarize, analyze, explain, make notes, answer questions, help with essays, analyze articles, novels, short stories, arguments, themes, language, structure and message. If it contains math, the AI should solve it step-by-step like an expert math tutor.
+
+PAGE TITLE:
+${clean(pageTitle)}
+
+HEADINGS:
+${clean(headings || "No headings found.")}
+
+VISIBLE CONTENT:
+${clean(bestText || "No visible text found.")}
 `
   };
 }
