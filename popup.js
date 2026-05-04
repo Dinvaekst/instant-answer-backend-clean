@@ -3,7 +3,6 @@ let currentPageType = "";
 let currentPageLabel = "";
 let pageLoaded = false;
 
-let chatMessages = JSON.parse(localStorage.getItem("instant_answer_chat_messages") || "[]");
 let activeChatTool = "normal";
 
 const BACKEND_URL = "https://instant-answer-backend-clean.onrender.com";
@@ -15,16 +14,123 @@ const userLanguage = navigator.language || "en";
 const DAILY_LIMIT = 5;
 const PRO_LINK = "https://buy.stripe.com/4gMbJ38OycALbkD3ZD3ks02";
 
-function saveChatMessages() {
-  localStorage.setItem(
-    "instant_answer_chat_messages",
-    JSON.stringify(chatMessages.slice(-30))
+const CHAT_CONVERSATIONS_KEY = "instant_answer_chat_conversations";
+const ACTIVE_CHAT_ID_KEY = "instant_answer_active_chat_id";
+
+let chatConversations = JSON.parse(localStorage.getItem(CHAT_CONVERSATIONS_KEY) || "[]");
+let activeChatId = localStorage.getItem(ACTIVE_CHAT_ID_KEY);
+
+function createConversation(title = "New chat") {
+  return {
+    id: crypto.randomUUID(),
+    title,
+    messages: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function saveConversations() {
+  localStorage.setItem(CHAT_CONVERSATIONS_KEY, JSON.stringify(chatConversations.slice(0, 30)));
+  localStorage.setItem(ACTIVE_CHAT_ID_KEY, activeChatId);
+}
+
+function getActiveConversation() {
+  let conversation = chatConversations.find(chat => chat.id === activeChatId);
+
+  if (!conversation) {
+    conversation = createConversation();
+    chatConversations.unshift(conversation);
+    activeChatId = conversation.id;
+    saveConversations();
+  }
+
+  return conversation;
+}
+
+function generateChatTitle(message = "") {
+  const clean = message.replace(/\s+/g, " ").trim();
+
+  if (!clean) return "New chat";
+
+  return clean.length > 34 ? `${clean.slice(0, 34)}...` : clean;
+}
+
+if (chatConversations.length === 0) {
+  const oldMessages = JSON.parse(localStorage.getItem("instant_answer_chat_messages") || "[]");
+  const firstConversation = createConversation(
+    oldMessages.length > 0 ? generateChatTitle(oldMessages[0]?.content || "Old chat") : "New chat"
   );
+
+  firstConversation.messages = oldMessages;
+  chatConversations.unshift(firstConversation);
+  activeChatId = firstConversation.id;
+  saveConversations();
+}
+
+let chatMessages = getActiveConversation().messages || [];
+
+function saveChatMessages() {
+  const conversation = getActiveConversation();
+
+  conversation.messages = chatMessages.slice(-40);
+  conversation.updatedAt = new Date().toISOString();
+
+  const firstUserMessage = conversation.messages.find(msg => msg.role === "user");
+
+  if (firstUserMessage) {
+    conversation.title = generateChatTitle(firstUserMessage.content);
+  }
+
+  chatConversations = chatConversations
+    .map(chat => chat.id === conversation.id ? conversation : chat)
+    .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+
+  saveConversations();
+}
+
+function startNewChat() {
+  const conversation = createConversation();
+  chatConversations.unshift(conversation);
+  activeChatId = conversation.id;
+  chatMessages = [];
+  saveConversations();
+}
+
+function openOldChat(id) {
+  activeChatId = id;
+  chatMessages = getActiveConversation().messages || [];
+  saveConversations();
+}
+
+function deleteChat(id) {
+  chatConversations = chatConversations.filter(chat => chat.id !== id);
+
+  if (chatConversations.length === 0) {
+    const conversation = createConversation();
+    chatConversations.unshift(conversation);
+    activeChatId = conversation.id;
+  } else if (activeChatId === id) {
+    activeChatId = chatConversations[0].id;
+  }
+
+  chatMessages = getActiveConversation().messages || [];
+  saveConversations();
 }
 
 function clearChatMessages() {
+  const conversation = getActiveConversation();
+  conversation.messages = [];
+  conversation.title = "New chat";
+  conversation.updatedAt = new Date().toISOString();
+
   chatMessages = [];
-  localStorage.removeItem("instant_answer_chat_messages");
+
+  chatConversations = chatConversations.map(chat =>
+    chat.id === conversation.id ? conversation : chat
+  );
+
+  saveConversations();
 }
 
 function escapeHTML(text = "") {
@@ -333,11 +439,113 @@ document.addEventListener("DOMContentLoaded", async () => {
     `;
   }
 
+  function renderConversationList() {
+    if (chatConversations.length === 0) {
+      return `<div style="font-size:12px;color:#777;">No chats yet.</div>`;
+    }
+
+    return chatConversations.slice(0, 8).map(chat => {
+      const active = chat.id === activeChatId;
+
+      return `
+        <div style="
+          display:flex;
+          gap:6px;
+          align-items:center;
+          margin-bottom:6px;
+        ">
+          <button class="oldChatBtn" data-id="${chat.id}" style="
+            flex:1;
+            text-align:left;
+            padding:8px 10px;
+            border-radius:10px;
+            border:${active ? "1px solid #111" : "1px solid #ddd"};
+            background:${active ? "#111" : "#f7f7f7"};
+            color:${active ? "white" : "#222"};
+            font-size:12px;
+            font-weight:700;
+            cursor:pointer;
+            overflow:hidden;
+            white-space:nowrap;
+            text-overflow:ellipsis;
+          ">
+            ${escapeHTML(chat.title || "New chat")}
+          </button>
+
+          <button class="deleteChatBtn" data-id="${chat.id}" style="
+            width:34px;
+            height:34px;
+            border-radius:10px;
+            border:1px solid #ddd;
+            background:#fff;
+            color:#555;
+            cursor:pointer;
+            font-weight:900;
+          ">×</button>
+        </div>
+      `;
+    }).join("");
+  }
+
   function openChat() {
+    const activeConversation = getActiveConversation();
+
     result.innerHTML = `
       <div class="answer-box">
         <div class="answer-label">CHAT</div>
         <div class="answer-title">Instant Answer Chat</div>
+
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <button id="newChatBtn" style="
+            flex:1;
+            padding:10px;
+            border:none;
+            border-radius:12px;
+            background:#111;
+            color:white;
+            font-weight:900;
+            cursor:pointer;
+          ">+ New Chat</button>
+
+          <button id="toggleOldChatsBtn" style="
+            flex:1;
+            padding:10px;
+            border:1px solid #ddd;
+            border-radius:12px;
+            background:#f7f7f7;
+            color:#111;
+            font-weight:900;
+            cursor:pointer;
+          ">Old Chats</button>
+        </div>
+
+        <div id="oldChatsBox" style="
+          display:none;
+          margin-bottom:12px;
+          padding:10px;
+          border:1px solid #eee;
+          border-radius:14px;
+          background:#fafafa;
+          max-height:180px;
+          overflow-y:auto;
+        ">
+          ${renderConversationList()}
+        </div>
+
+        <div style="
+          font-size:12px;
+          color:#777;
+          margin-bottom:8px;
+          background:#f7f7f7;
+          border:1px solid #eee;
+          border-radius:12px;
+          padding:8px 10px;
+          overflow:hidden;
+          white-space:nowrap;
+          text-overflow:ellipsis;
+        ">
+          Current chat: ${escapeHTML(activeConversation.title || "New chat")}
+        </div>
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:10px;">
           <button id="assignmentBtn" style="${getToolButtonStyle("assignment")}">Assignment</button>
@@ -349,7 +557,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         </div>
 
         <div id="chatMessages" style="
-          max-height: 240px;
+          max-height: 260px;
           overflow-y: auto;
           margin-bottom: 10px;
           font-size: 13px;
@@ -364,7 +572,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           resize: none;
           box-sizing: border-box;
           border: 1px solid #ddd;
-          border-radius: 10px;
+          border-radius: 12px;
           padding: 10px;
           font-family: Arial, sans-serif;
           font-size: 13px;
@@ -376,7 +584,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           margin-top: 8px;
           padding: 11px;
           border: none;
-          border-radius: 10px;
+          border-radius: 12px;
           background: linear-gradient(135deg, #000, #333);
           color: white;
           font-weight: bold;
@@ -388,7 +596,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           margin-top: 8px;
           padding: 10px;
           border: none;
-          border-radius: 10px;
+          border-radius: 12px;
           background: #111;
           color: white;
           font-weight: bold;
@@ -400,7 +608,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           margin-top: 8px;
           padding: 10px;
           border: 1px solid #ddd;
-          border-radius: 10px;
+          border-radius: 12px;
           background: #f7f7f7;
           color: #333;
           font-weight: bold;
@@ -408,6 +616,30 @@ document.addEventListener("DOMContentLoaded", async () => {
         ">${getClearChatLabel()}</button>
       </div>
     `;
+
+    document.getElementById("newChatBtn").onclick = () => {
+      startNewChat();
+      openChat();
+    };
+
+    document.getElementById("toggleOldChatsBtn").onclick = () => {
+      const box = document.getElementById("oldChatsBox");
+      box.style.display = box.style.display === "none" ? "block" : "none";
+    };
+
+    document.querySelectorAll(".oldChatBtn").forEach(btn => {
+      btn.onclick = () => {
+        openOldChat(btn.dataset.id);
+        openChat();
+      };
+    });
+
+    document.querySelectorAll(".deleteChatBtn").forEach(btn => {
+      btn.onclick = () => {
+        deleteChat(btn.dataset.id);
+        openChat();
+      };
+    });
 
     document.getElementById("assignmentBtn").onclick = () => {
       activeChatTool = "assignment";
