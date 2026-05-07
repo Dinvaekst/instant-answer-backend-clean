@@ -84,6 +84,119 @@ app.post("/check-pro", (req, res) => {
   res.json({ pro: isProUser(deviceId) });
 });
 
+function extractLatestUserMessage(input = "") {
+  const match = input.match(/User's latest message:\s*([\s\S]*?)(?:\n\nRules:|\nRules:|$)/i);
+  if (match?.[1]) return match[1].trim();
+
+  const googleMatch = input.match(/SEARCH QUERY:\s*([\s\S]*?)(?:\n\nVISIBLE RESULTS:|\nVISIBLE RESULTS:|$)/i);
+  if (googleMatch?.[1]) return googleMatch[1].trim();
+
+  return input.slice(0, 500).trim();
+}
+
+function shouldUseWebSearch(input = "", mode = "chat") {
+  const text = input.toLowerCase();
+
+  if (text.includes("page type:\ngoogle search results")) return true;
+  if (text.includes("google search query:")) return true;
+  if (text.includes("search query:")) return true;
+
+  const searchWords = [
+    "søg",
+    "search",
+    "google",
+    "find information",
+    "find info",
+    "nyeste",
+    "latest",
+    "aktuel",
+    "current",
+    "i dag",
+    "today",
+    "2025",
+    "2026",
+    "nyheder",
+    "news",
+    "pris",
+    "price",
+    "hvem er",
+    "who is",
+    "hvad er",
+    "what is",
+    "hvornår",
+    "when",
+    "opdateret",
+    "updated"
+  ];
+
+  return searchWords.some(word => text.includes(word));
+}
+
+async function searchWeb(query, isPro) {
+  if (!process.env.TAVILY_API_KEY) {
+    return "";
+  }
+
+  if (!query || query.length < 3) {
+    return "";
+  }
+
+  try {
+    const response = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.TAVILY_API_KEY}`
+      },
+      body: JSON.stringify({
+        query,
+        topic: "general",
+        search_depth: isPro ? "advanced" : "basic",
+        max_results: isPro ? 6 : 3,
+        include_answer: false,
+        include_raw_content: false
+      })
+    });
+
+    if (!response.ok) {
+      console.error("Tavily search failed:", response.status, await response.text());
+      return "";
+    }
+
+    const data = await response.json();
+
+    if (!data.results || !Array.isArray(data.results)) {
+      return "";
+    }
+
+    const results = data.results
+      .slice(0, isPro ? 6 : 3)
+      .map((item, index) => {
+        return `
+Source ${index + 1}:
+Title: ${item.title || "No title"}
+URL: ${item.url || "No URL"}
+Content: ${item.content || "No content"}
+`;
+      })
+      .join("\n");
+
+    return `
+WEB SEARCH RESULTS:
+${results}
+
+Rules for using web results:
+- Use these results only when relevant.
+- Do not invent sources.
+- If sources are weak or unclear, say it briefly.
+- Prefer clear, direct answers.
+`;
+  } catch (error) {
+    console.error("Tavily error:", error);
+    return "";
+  }
+}
+
 function buildPrompt(mode, input, isPro) {
   const qualityRule = isPro
     ? `
@@ -120,6 +233,7 @@ VERY IMPORTANT:
 - Do NOT only explain what the user could do. Actually do the task.
 - Use the same language as the user unless a language rule says otherwise.
 - Do not invent fake sources, fake quotes, fake page numbers or fake facts.
+- If web search results are included, use them to make the answer more current and accurate.
 - Keep the answer clean, human and easy to copy.
 - Avoid generic advice.
 - Be practical, direct and helpful.
@@ -337,7 +451,16 @@ app.post("/ask", async (req, res) => {
     }
 
     const isPro = isProUser(deviceId);
-    const prompt = buildPrompt(mode, input, isPro);
+
+    const latestMessage = extractLatestUserMessage(input);
+    const useSearch = shouldUseWebSearch(input, mode);
+    const webResults = useSearch ? await searchWeb(latestMessage, isPro) : "";
+
+    const finalInput = webResults
+      ? `${input}\n\n${webResults}`
+      : input;
+
+    const prompt = buildPrompt(mode, finalInput, isPro);
 
     const completion = await openai.chat.completions.create({
       model: isPro ? "gpt-4o" : "gpt-4o-mini",
@@ -359,6 +482,7 @@ If the user asks for school help, give a strong draft, structure and clear wordi
 If the user asks to improve text, rewrite it fully.
 If the user asks for feedback, give honest teacher-style feedback.
 If the user asks about the current page, use the page context.
+If web search results are included, use them carefully and mention source titles when useful.
 
 Style:
 - Direct
@@ -385,7 +509,8 @@ Always answer in the user's language unless told otherwise.
 
     res.json({
       answer,
-      pro: isPro
+      pro: isPro,
+      usedSearch: Boolean(webResults)
     });
 
   } catch (error) {
