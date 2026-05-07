@@ -134,6 +134,7 @@ function shouldUseWebSearch(input = "", mode = "chat") {
 
 async function searchWeb(query, isPro) {
   if (!process.env.TAVILY_API_KEY) {
+    console.log("Missing TAVILY_API_KEY");
     return "";
   }
 
@@ -152,8 +153,8 @@ async function searchWeb(query, isPro) {
         query,
         topic: "general",
         search_depth: isPro ? "advanced" : "basic",
-        max_results: isPro ? 6 : 3,
-        include_answer: false,
+        max_results: isPro ? 6 : 4,
+        include_answer: true,
         include_raw_content: false
       })
     });
@@ -165,31 +166,48 @@ async function searchWeb(query, isPro) {
 
     const data = await response.json();
 
-    if (!data.results || !Array.isArray(data.results)) {
-      return "";
-    }
+    const answer = data.answer
+      ? `
+Tavily direct answer:
+${data.answer}
+`
+      : "";
 
-    const results = data.results
-      .slice(0, isPro ? 6 : 3)
-      .map((item, index) => {
-        return `
+    const results = Array.isArray(data.results)
+      ? data.results
+          .slice(0, isPro ? 6 : 4)
+          .map((item, index) => {
+            return `
 Source ${index + 1}:
 Title: ${item.title || "No title"}
 URL: ${item.url || "No URL"}
 Content: ${item.content || "No content"}
 `;
-      })
-      .join("\n");
+          })
+          .join("\n")
+      : "";
+
+    if (!answer && !results) return "";
 
     return `
-WEB SEARCH RESULTS:
+WEB SEARCH RESULTS START
+
+Search query:
+${query}
+
+${answer}
+
 ${results}
 
-Rules for using web results:
-- Use these results only when relevant.
+WEB SEARCH RESULTS END
+
+IMPORTANT WEB RULES:
+- These are real-time web results.
+- Use these results when answering.
+- Trust these results more than old model knowledge.
+- If the answer is found in the web results, answer directly.
+- Do not say you cannot know if the web results answer it.
 - Do not invent sources.
-- If sources are weak or unclear, say it briefly.
-- Prefer clear, direct answers.
 `;
   } catch (error) {
     console.error("Tavily error:", error);
@@ -233,7 +251,9 @@ VERY IMPORTANT:
 - Do NOT only explain what the user could do. Actually do the task.
 - Use the same language as the user unless a language rule says otherwise.
 - Do not invent fake sources, fake quotes, fake page numbers or fake facts.
-- If web search results are included, use them to make the answer more current and accurate.
+- If web search results are included, use them as real-time information.
+- Trust web search results more than old model knowledge.
+- If web results answer the question, answer directly from them.
 - Keep the answer clean, human and easy to copy.
 - Avoid generic advice.
 - Be practical, direct and helpful.
@@ -457,14 +477,25 @@ app.post("/ask", async (req, res) => {
     const webResults = useSearch ? await searchWeb(latestMessage, isPro) : "";
 
     const finalInput = webResults
-      ? `${input}\n\n${webResults}`
+      ? `
+IMPORTANT:
+You have REAL web search results below.
+You MUST use them when answering.
+Do NOT ignore the search results.
+If the answer exists in the search results, answer directly.
+Trust the search results more than old knowledge.
+
+${input}
+
+${webResults}
+`
       : input;
 
     const prompt = buildPrompt(mode, finalInput, isPro);
 
     const completion = await openai.chat.completions.create({
       model: isPro ? "gpt-4o" : "gpt-4o-mini",
-      temperature: isPro ? 0.25 : 0.35,
+      temperature: isPro ? 0.2 : 0.3,
       max_tokens: getMaxTokens(mode, isPro),
       messages: [
         {
@@ -482,7 +513,13 @@ If the user asks for school help, give a strong draft, structure and clear wordi
 If the user asks to improve text, rewrite it fully.
 If the user asks for feedback, give honest teacher-style feedback.
 If the user asks about the current page, use the page context.
-If web search results are included, use them carefully and mention source titles when useful.
+
+If web search results are available:
+- Trust the web results more than your old training knowledge.
+- Answer directly from the search results.
+- Never ignore real-time search results.
+- Do not say you cannot know if web results answer the question.
+- Mention source titles briefly when useful.
 
 Style:
 - Direct
