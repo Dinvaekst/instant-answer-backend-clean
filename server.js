@@ -7,8 +7,9 @@ import Stripe from "stripe";
 dotenv.config();
 
 const app = express();
+
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "4mb" }));
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -19,11 +20,217 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const proDevices = new Set();
 
 function isProUser(deviceId) {
-  return proDevices.has(deviceId);
+  return Boolean(deviceId && proDevices.has(deviceId));
+}
+
+function cleanText(text = "") {
+  return String(text)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function limitText(text = "", max = 12000) {
+  const value = String(text || "");
+  if (value.length <= max) return value;
+  return value.slice(0, max) + "\n\n[Content shortened for stability]";
+}
+
+function extractLatestUserMessage(input = "") {
+  const text = String(input || "");
+
+  const latestMatch = text.match(/User's latest message:\s*([\s\S]*?)(?:\n\nRules:|\nRules:|$)/i);
+  if (latestMatch?.[1]) return cleanText(latestMatch[1]).slice(0, 500);
+
+  const searchMatch = text.match(/SEARCH QUERY:\s*([\s\S]*?)(?:\n\nVISIBLE RESULTS:|\nVISIBLE RESULTS:|$)/i);
+  if (searchMatch?.[1]) return cleanText(searchMatch[1]).slice(0, 500);
+
+  const googleMatch = text.match(/Google search query:\s*([\s\S]*?)(?:\n|$)/i);
+  if (googleMatch?.[1]) return cleanText(googleMatch[1]).slice(0, 500);
+
+  return cleanText(text).slice(0, 500);
+}
+
+function detectPageType(input = "") {
+  const text = input.toLowerCase();
+
+  if (text.includes("reddit.com") || text.includes("page type:\nreddit")) return "reddit";
+  if (text.includes("google search results") || text.includes("search query:")) return "google";
+  if (text.includes("youtube.com") || text.includes("page type:\nyoutube")) return "youtube";
+  if (text.includes("current page") || text.includes("page content")) return "webpage";
+
+  return "normal";
+}
+
+function shouldUseWebSearch(input = "", mode = "chat") {
+  const text = input.toLowerCase();
+  const pageType = detectPageType(input);
+
+  if (pageType === "google") return true;
+
+  const searchTriggers = [
+    "søg",
+    "search",
+    "google",
+    "find information",
+    "find info",
+    "nyeste",
+    "latest",
+    "aktuel",
+    "current",
+    "i dag",
+    "today",
+    "nyheder",
+    "news",
+    "pris",
+    "price",
+    "hvem er",
+    "who is",
+    "hvornår",
+    "when",
+    "opdateret",
+    "updated",
+    "2025",
+    "2026"
+  ];
+
+  return searchTriggers.some((word) => text.includes(word));
+}
+
+async function searchWeb(query, isPro) {
+  if (!process.env.TAVILY_API_KEY) return { text: "", sources: [] };
+  if (!query || query.length < 3) return { text: "", sources: [] };
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), isPro ? 12000 : 8000);
+
+    const response = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.TAVILY_API_KEY}`
+      },
+      body: JSON.stringify({
+        query,
+        topic: "general",
+        search_depth: isPro ? "advanced" : "basic",
+        max_results: isPro ? 6 : 4,
+        include_answer: true,
+        include_raw_content: false
+      })
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      console.error("Tavily failed:", response.status, await response.text());
+      return { text: "", sources: [] };
+    }
+
+    const data = await response.json();
+
+    const sources = Array.isArray(data.results)
+      ? data.results.slice(0, isPro ? 6 : 4).map((item, index) => ({
+          number: index + 1,
+          title: item.title || "Untitled source",
+          url: item.url || "",
+          content: item.content || ""
+        }))
+      : [];
+
+    const sourceText = sources
+      .map(
+        (source) => `
+Source ${source.number}
+Title: ${source.title}
+URL: ${source.url}
+Content: ${limitText(source.content, 1000)}
+`
+      )
+      .join("\n");
+
+    const text = `
+WEB SEARCH RESULTS
+
+Query:
+${query}
+
+Direct answer:
+${data.answer || "No direct answer"}
+
+Sources:
+${sourceText}
+
+Rules:
+- Use these sources when they answer the user.
+- Mention source titles when useful.
+- Do not invent sources.
+`;
+
+    return { text, sources };
+  } catch (error) {
+    console.error("Tavily error:", error.message);
+    return { text: "", sources: [] };
+  }
+}
+
+function buildPrompt(mode, input, isPro, pageType) {
+  const plan = isPro ? "PRO" : "FREE";
+
+  return `
+You are Instant Answer.
+
+User plan: ${plan}
+Mode: ${mode}
+Page type: ${pageType}
+
+Main rules:
+- Answer in the same language as the user.
+- Do exactly what the user asks.
+- Be direct, useful and human.
+- If the user asks for text, write the text.
+- If the user asks for a long answer, write a long answer.
+- If it cannot fit, write Part 1 and end with: "Skriv fortsæt, så skriver jeg næste del."
+- Do not invent facts, quotes, sources or page numbers.
+- Use current page context if included.
+- If web results are included, trust them more than old knowledge.
+- For Google results: understand the search intent and summarize the best answer.
+- For Reddit: summarize opinions, patterns, warnings and useful points.
+- For webpages: focus on the visible content and user question.
+
+Quality:
+- Strong structure.
+- Clear explanation.
+- Concrete examples when useful.
+- No generic filler.
+
+User input:
+${limitText(input, isPro ? 24000 : 14000)}
+`;
+}
+
+function getMaxTokens(mode, isPro) {
+  if (isPro) {
+    if (mode === "quick") return 700;
+    if (mode === "assignment") return 4000;
+    if (mode === "study") return 3800;
+    if (mode === "deep") return 3800;
+    return 3500;
+  }
+
+  if (mode === "quick") return 300;
+  if (mode === "assignment") return 1400;
+  if (mode === "study") return 1400;
+  if (mode === "deep") return 1400;
+  return 1200;
 }
 
 app.get("/", (req, res) => {
-  res.send("Instant Answer backend is running.");
+  res.json({
+    status: "ok",
+    message: "Instant Answer backend is running"
+  });
 });
 
 app.get("/success", async (req, res) => {
@@ -68,430 +275,45 @@ app.get("/success", async (req, res) => {
           <div class="box">
             <h1>Pro activated</h1>
             <p>Thanks for upgrading to Instant Answer Pro.</p>
-            <p>You can now go back to the extension. Pro is active on this device.</p>
+            <p>You can now go back to the extension.</p>
           </div>
         </body>
       </html>
     `);
   } catch (error) {
-    console.error(error);
+    console.error("Stripe success error:", error);
     res.send("Could not verify payment.");
   }
 });
 
 app.post("/check-pro", (req, res) => {
-  const { deviceId } = req.body;
+  const { deviceId } = req.body || {};
   res.json({ pro: isProUser(deviceId) });
 });
 
-function extractLatestUserMessage(input = "") {
-  const match = input.match(/User's latest message:\s*([\s\S]*?)(?:\n\nRules:|\nRules:|$)/i);
-  if (match?.[1]) return match[1].trim();
-
-  const googleMatch = input.match(/SEARCH QUERY:\s*([\s\S]*?)(?:\n\nVISIBLE RESULTS:|\nVISIBLE RESULTS:|$)/i);
-  if (googleMatch?.[1]) return googleMatch[1].trim();
-
-  return input.slice(0, 500).trim();
-}
-
-function shouldUseWebSearch(input = "", mode = "chat") {
-  const text = input.toLowerCase();
-
-  if (text.includes("page type:\ngoogle search results")) return true;
-  if (text.includes("google search query:")) return true;
-  if (text.includes("search query:")) return true;
-
-  const searchWords = [
-    "søg",
-    "search",
-    "google",
-    "find information",
-    "find info",
-    "nyeste",
-    "latest",
-    "aktuel",
-    "current",
-    "i dag",
-    "today",
-    "2025",
-    "2026",
-    "nyheder",
-    "news",
-    "pris",
-    "price",
-    "hvem er",
-    "who is",
-    "hvad er",
-    "what is",
-    "hvornår",
-    "when",
-    "opdateret",
-    "updated"
-  ];
-
-  return searchWords.some(word => text.includes(word));
-}
-
-async function searchWeb(query, isPro) {
-  if (!process.env.TAVILY_API_KEY) {
-    console.log("Missing TAVILY_API_KEY");
-    return "";
-  }
-
-  if (!query || query.length < 3) {
-    return "";
-  }
-
-  try {
-    const response = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.TAVILY_API_KEY}`
-      },
-      body: JSON.stringify({
-        query,
-        topic: "general",
-        search_depth: isPro ? "advanced" : "basic",
-        max_results: isPro ? 6 : 4,
-        include_answer: true,
-        include_raw_content: false
-      })
-    });
-
-    if (!response.ok) {
-      console.error("Tavily search failed:", response.status, await response.text());
-      return "";
-    }
-
-    const data = await response.json();
-
-    const answer = data.answer
-      ? `
-Tavily direct answer:
-${data.answer}
-`
-      : "";
-
-    const results = Array.isArray(data.results)
-      ? data.results
-          .slice(0, isPro ? 6 : 4)
-          .map((item, index) => {
-            return `
-Source ${index + 1}:
-Title: ${item.title || "No title"}
-URL: ${item.url || "No URL"}
-Content: ${item.content || "No content"}
-`;
-          })
-          .join("\n")
-      : "";
-
-    if (!answer && !results) return "";
-
-    return `
-WEB SEARCH RESULTS START
-
-Search query:
-${query}
-
-${answer}
-
-${results}
-
-WEB SEARCH RESULTS END
-
-IMPORTANT WEB RULES:
-- These are real-time web results.
-- Use these results when answering.
-- Trust these results more than old model knowledge.
-- If the answer is found in the web results, answer directly.
-- Do not say you cannot know if the web results answer it.
-- Do not invent sources.
-`;
-  } catch (error) {
-    console.error("Tavily error:", error);
-    return "";
-  }
-}
-
-function buildPrompt(mode, input, isPro) {
-  const qualityRule = isPro
-    ? `
-USER PLAN: PRO
-
-Give a premium answer:
-- Longer and more complete.
-- More useful.
-- More direct.
-- Better school help.
-- Better structure.
-- Better examples.
-- Better explanations.
-- If the user asks for a long text, write the long text instead of only giving advice.
-`
-    : `
-USER PLAN: FREE
-
-Still be useful:
-- Answer directly.
-- Do not be lazy.
-- Keep it shorter than Pro, but still complete enough to help.
-- If the user asks for a text, write a useful version, not just advice.
-`;
-
-  const globalRules = `
-VERY IMPORTANT:
-- Act like a high-quality ChatGPT-style assistant.
-- Understand the user's real intention.
-- Do exactly what the user asks.
-- If the user asks you to write something, write it.
-- If the user says "skriv på 12000 enheder", "12000 tegn", "12000 characters" or similar, they want a long text around that length.
-- If the full requested length is too long for one answer, write Part 1 and end with: "Skriv fortsæt, så skriver jeg næste del."
-- Do NOT only explain what the user could do. Actually do the task.
-- Use the same language as the user unless a language rule says otherwise.
-- Do not invent fake sources, fake quotes, fake page numbers or fake facts.
-- If web search results are included, use them as real-time information.
-- Trust web search results more than old model knowledge.
-- If web results answer the question, answer directly from them.
-- Keep the answer clean, human and easy to copy.
-- Avoid generic advice.
-- Be practical, direct and helpful.
-`;
-
-  if (mode === "chat") {
-    return `
-You are Instant Answer Chat.
-
-${qualityRule}
-${globalRules}
-
-Task:
-Help the user exactly with what they ask.
-
-If they ask for a long text:
-- Start writing the actual text.
-- Use headings if useful.
-- Make it coherent.
-- Continue as far as possible within the answer limit.
-
-Input:
-${input}
-`;
-  }
-
-  if (mode === "assignment") {
-    return `
-You are Instant Answer Assignment Helper.
-
-${qualityRule}
-${globalRules}
-
-Task:
-The user has pasted or described an assignment.
-
-You must provide:
-1. What the assignment requires.
-2. How to start.
-3. A strong disposition/structure.
-4. A useful draft/example answer.
-5. Concrete sentences the user can use.
-
-Important:
-- Do not only give tips.
-- Give the user something they can actually work from.
-- If the user asks for a full text, write a full draft.
-- If the user asks for a certain length, try to match it as much as possible.
-
-Input:
-${input}
-`;
-  }
-
-  if (mode === "improve") {
-    return `
-You are Instant Answer Improve Text.
-
-${qualityRule}
-${globalRules}
-
-Task:
-Improve the user's text.
-
-You must:
-1. Rewrite the text better.
-2. Correct grammar and spelling.
-3. Make it sound more natural and human.
-4. Keep the original meaning.
-5. Make it clearer and stronger.
-6. Explain briefly what you improved.
-
-Input:
-${input}
-`;
-  }
-
-  if (mode === "feedback") {
-    return `
-You are Instant Answer Teacher Feedback.
-
-${qualityRule}
-${globalRules}
-
-Task:
-Give useful teacher-style feedback.
-
-You must include:
-1. What is good.
-2. What is weak/missing.
-3. How to improve it.
-4. Concrete examples.
-5. A better version if useful.
-
-Input:
-${input}
-`;
-  }
-
-  if (mode === "quick") {
-    return `
-You are Instant Answer.
-
-${qualityRule}
-${globalRules}
-
-Task:
-Give a quick but useful answer.
-
-Format:
-Quick answer:
-[direct answer]
-
-Key points:
-• [point]
-• [point]
-• [point]
-
-Input:
-${input}
-`;
-  }
-
-  if (mode === "deep") {
-    return `
-You are Instant Answer Deep Explainer.
-
-${qualityRule}
-${globalRules}
-
-Task:
-Explain the content deeply and clearly.
-
-Format:
-Overview:
-[explanation]
-
-Important details:
-• [detail]
-• [detail]
-• [detail]
-
-What it means:
-[clear meaning]
-
-Useful next step:
-[next step]
-
-Input:
-${input}
-`;
-  }
-
-  if (mode === "study") {
-    return `
-You are Instant Answer Study Assistant.
-
-${qualityRule}
-${globalRules}
-
-Task:
-Help the user learn and solve school work.
-
-You must:
-- Explain simply.
-- Show structure.
-- Give examples.
-- Help the user start writing.
-- If the user asks for a written answer, write a useful draft.
-
-Input:
-${input}
-`;
-  }
-
-  return `
-You are Instant Answer.
-
-${qualityRule}
-${globalRules}
-
-Input:
-${input}
-`;
-}
-
-function getMaxTokens(mode, isPro) {
-  if (isPro) {
-    if (mode === "quick") return 700;
-    if (mode === "chat") return 3500;
-    if (mode === "assignment") return 4000;
-    if (mode === "improve") return 3500;
-    if (mode === "feedback") return 3000;
-    if (mode === "study") return 3800;
-    if (mode === "deep") return 3800;
-    return 3500;
-  }
-
-  if (mode === "quick") return 250;
-  if (mode === "chat") return 1200;
-  if (mode === "assignment") return 1400;
-  if (mode === "improve") return 1300;
-  if (mode === "feedback") return 1200;
-  if (mode === "study") return 1400;
-  if (mode === "deep") return 1400;
-  return 1200;
-}
-
 app.post("/ask", async (req, res) => {
   try {
-    const { input, mode = "chat", deviceId } = req.body;
+    const { input, mode = "chat", deviceId } = req.body || {};
 
-    if (!input) {
-      return res.status(400).json({ error: "Missing input" });
+    if (!input || typeof input !== "string") {
+      return res.status(400).json({
+        error: "Missing input",
+        answer: "Der mangler input."
+      });
     }
 
     const isPro = isProUser(deviceId);
-
+    const pageType = detectPageType(input);
     const latestMessage = extractLatestUserMessage(input);
     const useSearch = shouldUseWebSearch(input, mode);
-    const webResults = useSearch ? await searchWeb(latestMessage, isPro) : "";
 
-    const finalInput = webResults
-      ? `
-IMPORTANT:
-You have REAL web search results below.
-You MUST use them when answering.
-Do NOT ignore the search results.
-If the answer exists in the search results, answer directly.
-Trust the search results more than old knowledge.
+    const web = useSearch ? await searchWeb(latestMessage, isPro) : { text: "", sources: [] };
 
-${input}
-
-${webResults}
-`
+    const finalInput = web.text
+      ? `${input}\n\n${web.text}`
       : input;
 
-    const prompt = buildPrompt(mode, finalInput, isPro);
+    const prompt = buildPrompt(mode, finalInput, isPro, pageType);
 
     const completion = await openai.chat.completions.create({
       model: isPro ? "gpt-4o" : "gpt-4o-mini",
@@ -500,40 +322,8 @@ ${webResults}
       messages: [
         {
           role: "system",
-          content: `
-You are Instant Answer, a premium ChatGPT-style AI assistant inside a browser extension.
-
-Main rule:
-Do exactly what the user asks.
-
-If the user asks you to write something, write it.
-If the user asks for 12000 characters, 12000 enheder, or a long answer, write a long text and continue in parts.
-If the answer cannot fit in one response, write Part 1 and end with: "Skriv fortsæt, så skriver jeg næste del."
-If the user asks for school help, give a strong draft, structure and clear wording.
-If the user asks to improve text, rewrite it fully.
-If the user asks for feedback, give honest teacher-style feedback.
-If the user asks about the current page, use the page context.
-
-If web search results are available:
-- Trust the web results more than your old training knowledge.
-- Answer directly from the search results.
-- Never ignore real-time search results.
-- Do not say you cannot know if web results answer the question.
-- Mention source titles briefly when useful.
-
-Style:
-- Direct
-- Useful
-- Human
-- Clear
-- Detailed when needed
-- No boring generic advice
-- No fake sources
-- No fake quotes
-- No unnecessary disclaimers
-
-Always answer in the user's language unless told otherwise.
-`
+          content:
+            "You are Instant Answer, a fast premium AI assistant inside a Chrome extension. Be accurate, direct, helpful and stable."
         },
         {
           role: "user",
@@ -542,20 +332,33 @@ Always answer in the user's language unless told otherwise.
       ]
     });
 
-    const answer = completion.choices[0].message.content;
+    const answer =
+      completion?.choices?.[0]?.message?.content?.trim() ||
+      "Jeg kunne ikke lave et svar. Prøv igen.";
 
     res.json({
       answer,
       pro: isPro,
-      usedSearch: Boolean(webResults)
+      usedSearch: Boolean(web.text),
+      pageType,
+      sources: web.sources.map((source) => ({
+        title: source.title,
+        url: source.url
+      }))
     });
-
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Server error" });
+    console.error("Ask error:", error);
+
+    res.status(500).json({
+      error: "Server error",
+      answer:
+        "Der skete en fejl i AI-serveren. Prøv igen om lidt, eller gør spørgsmålet kortere."
+    });
   }
 });
 
-app.listen(3000, () => {
-  console.log("Instant Answer backend running on http://localhost:3000");
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Instant Answer backend running on http://localhost:${PORT}`);
 });

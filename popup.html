@@ -38,7 +38,7 @@
       background: #f1f1f1;
       padding: 6px 10px;
       border-radius: 999px;
-      font-weight: 700;
+      font-weight: 800;
     }
 
     .pro-status {
@@ -47,7 +47,7 @@
       color: white;
       padding: 6px 10px;
       border-radius: 999px;
-      font-weight: 700;
+      font-weight: 800;
     }
 
     h2 {
@@ -73,24 +73,28 @@
       padding: 12px;
       margin: 0 0 14px 0;
       line-height: 1.45;
+      max-height: 58px;
+      overflow: hidden;
     }
 
-    .mode-buttons {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-
+    .mode-buttons,
     .extra-buttons {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
+    }
+
+    .mode-buttons {
+      margin-bottom: 10px;
+    }
+
+    .extra-buttons {
       margin-bottom: 12px;
     }
 
     button {
       transition: 0.15s ease;
+      font-family: inherit;
     }
 
     .mode-buttons button,
@@ -100,7 +104,7 @@
       border-radius: 16px;
       background: linear-gradient(135deg, #050505, #262626);
       color: white;
-      font-weight: 800;
+      font-weight: 900;
       cursor: pointer;
       font-size: 13px;
       box-shadow: 0 8px 18px rgba(0,0,0,0.14);
@@ -123,7 +127,7 @@
     }
 
     button:disabled {
-      opacity: 0.65;
+      opacity: 0.55;
       cursor: not-allowed;
       transform: none;
     }
@@ -141,13 +145,17 @@
       overflow-y: auto;
     }
 
+    .answer-box {
+      width: 100%;
+    }
+
     .answer-label {
       font-size: 10px;
       color: #6b7280;
       margin-bottom: 6px;
       text-transform: uppercase;
       letter-spacing: 0.8px;
-      font-weight: 800;
+      font-weight: 900;
     }
 
     .answer-title {
@@ -159,6 +167,7 @@
 
     .answer-content {
       color: #111827;
+      word-break: break-word;
     }
 
     .loading {
@@ -166,6 +175,34 @@
       font-size: 13px;
       color: #6b7280;
       padding: 10px;
+      font-weight: 800;
+    }
+
+    .typingDots span {
+      animation: blink 1.2s infinite;
+      font-weight: 900;
+    }
+
+    .typingDots span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .typingDots span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    @keyframes blink {
+      0%, 20% {
+        opacity: 0.2;
+      }
+
+      50% {
+        opacity: 1;
+      }
+
+      100% {
+        opacity: 0.2;
+      }
     }
 
     .pro-box {
@@ -181,7 +218,7 @@
       text-transform: uppercase;
       letter-spacing: 0.8px;
       margin-bottom: 6px;
-      font-weight: 800;
+      font-weight: 900;
     }
 
     .pro-title {
@@ -213,6 +250,32 @@
       font-weight: 900;
       cursor: pointer;
     }
+
+    a {
+      color: #111;
+    }
+
+    textarea {
+      font-family: Inter, Arial, sans-serif;
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #f3f4f6;
+      border-radius: 999px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #d1d5db;
+      border-radius: 999px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #9ca3af;
+    }
   </style>
 </head>
 
@@ -240,7 +303,11 @@
       <button id="clearHistoryBtn">Clear</button>
     </div>
 
-    <div id="result"></div>
+    <div id="result">
+      <div class="loading">
+        Ready
+      </div>
+    </div>
   </div>
 
   <script src="popup.js"></script>

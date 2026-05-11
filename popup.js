@@ -2,8 +2,8 @@ let currentPageText = "";
 let currentPageType = "";
 let currentPageLabel = "";
 let pageLoaded = false;
-
 let activeChatTool = "normal";
+let isGenerating = false;
 
 const BACKEND_URL = "https://instant-answer-backend-clean.onrender.com";
 const ASK_URL = `${BACKEND_URL}/ask`;
@@ -123,7 +123,6 @@ function clearChatMessages() {
   conversation.messages = [];
   conversation.title = "New chat";
   conversation.updatedAt = new Date().toISOString();
-
   chatMessages = [];
 
   chatConversations = chatConversations.map(chat =>
@@ -134,7 +133,7 @@ function clearChatMessages() {
 }
 
 function escapeHTML(text = "") {
-  return text
+  return String(text)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -146,8 +145,8 @@ function formatAnswer(text = "") {
   return escapeHTML(text).replace(/\n/g, "<br>");
 }
 
-function cleanText(text = "", limit = 12000) {
-  return text.replace(/\s+/g, " ").trim().slice(0, limit);
+function cleanText(text = "", limit = 16000) {
+  return String(text || "").replace(/\s+/g, " ").trim().slice(0, limit);
 }
 
 function getLastAssistantAnswer() {
@@ -167,142 +166,22 @@ function getDownloadPDFLabel() {
   return "Download PDF";
 }
 
-function copyLastAnswer() {
-  const lastAnswer = getLastAssistantAnswer();
-
-  if (!lastAnswer) {
-    alert("No AI answer found yet.");
-    return;
-  }
-
-  navigator.clipboard.writeText(lastAnswer.content);
+function getThinkingLabel() {
+  if (userLanguage.startsWith("da")) return "AI tænker";
+  if (userLanguage.startsWith("tr")) return "AI düşünüyor";
+  if (userLanguage.startsWith("de")) return "AI denkt nach";
+  if (userLanguage.startsWith("fr")) return "L’IA réfléchit";
+  if (userLanguage.startsWith("es")) return "La IA está pensando";
+  return "AI is thinking";
 }
 
-function downloadLastAnswerAsPDF() {
-  const lastAnswer = getLastAssistantAnswer();
-
-  if (!lastAnswer) {
-    alert("No AI answer found yet.");
-    return;
-  }
-
-  const conversation = getActiveConversation();
-  const date = new Date().toLocaleString();
-  const cleanTextForPdf = escapeHTML(lastAnswer.content).replace(/\n/g, "<br>");
-
-  const printWindow = window.open("", "_blank");
-
-  printWindow.document.write(`
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>Instant Answer PDF</title>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            padding: 44px;
-            line-height: 1.65;
-            color: #111;
-            background: white;
-          }
-
-          .top {
-            border-bottom: 1px solid #ddd;
-            padding-bottom: 18px;
-            margin-bottom: 24px;
-          }
-
-          h1 {
-            font-size: 26px;
-            margin: 0 0 8px 0;
-          }
-
-          .meta {
-            font-size: 12px;
-            color: #666;
-            line-height: 1.6;
-          }
-
-          .content {
-            font-size: 14px;
-            white-space: normal;
-          }
-
-          .footer {
-            border-top: 1px solid #ddd;
-            margin-top: 40px;
-            padding-top: 16px;
-            font-size: 11px;
-            color: #777;
-          }
-
-          @media print {
-            button {
-              display: none;
-            }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="top">
-          <h1>Instant Answer</h1>
-          <div class="meta">
-            Chat: ${escapeHTML(conversation.title || "New chat")}<br>
-            Tool: ${escapeHTML(activeChatTool)}<br>
-            Date: ${escapeHTML(date)}
-          </div>
-        </div>
-
-        <div class="content">${cleanTextForPdf}</div>
-
-        <div class="footer">
-          Generated with Instant Answer
-        </div>
-
-        <script>
-          window.onload = function() {
-            window.print();
-          };
-        </script>
-      </body>
-    </html>
-  `);
-
-  printWindow.document.close();
-}
-
-function getChatPlaceholder() {
-  if (activeChatTool === "assignment") {
-    if (userLanguage.startsWith("da")) return "Indsæt din opgave her...";
-    return "Paste your assignment here...";
-  }
-
-  if (activeChatTool === "improve") {
-    if (userLanguage.startsWith("da")) return "Indsæt din tekst her...";
-    return "Paste your text here...";
-  }
-
-  if (activeChatTool === "feedback") {
-    if (userLanguage.startsWith("da")) return "Indsæt din tekst og få feedback...";
-    return "Paste your text and get feedback...";
-  }
-
-  if (activeChatTool === "math") {
-    if (userLanguage.startsWith("da")) return "Indsæt din matematikopgave her...";
-    return "Paste your math problem here...";
-  }
-
-  if (activeChatTool === "analyze") {
-    if (userLanguage.startsWith("da")) return "Spørg om siden, teksten, videoen eller artiklen...";
-    return "Ask about the page, text, video or article...";
-  }
-
-  if (userLanguage.startsWith("da")) return "Skriv dit spørgsmål...";
-  if (userLanguage.startsWith("tr")) return "Sorunu yaz...";
-  if (userLanguage.startsWith("de")) return "Stelle deine Frage...";
-  if (userLanguage.startsWith("fr")) return "Écris ta question...";
-  if (userLanguage.startsWith("es")) return "Escribe tu pregunta...";
-  return "Ask anything...";
+function getClearChatLabel() {
+  if (userLanguage.startsWith("da")) return "Ryd chat";
+  if (userLanguage.startsWith("tr")) return "Sohbeti temizle";
+  if (userLanguage.startsWith("de")) return "Chat löschen";
+  if (userLanguage.startsWith("fr")) return "Effacer le chat";
+  if (userLanguage.startsWith("es")) return "Borrar chat";
+  return "Clear Chat";
 }
 
 function getSendLabel() {
@@ -314,22 +193,22 @@ function getSendLabel() {
   return "Send";
 }
 
-function getThinkingLabel() {
-  if (userLanguage.startsWith("da")) return "Tænker";
-  if (userLanguage.startsWith("tr")) return "Düşünüyor";
-  if (userLanguage.startsWith("de")) return "Denke nach";
-  if (userLanguage.startsWith("fr")) return "Réflexion";
-  if (userLanguage.startsWith("es")) return "Pensando";
-  return "Thinking";
+function getLanguageInstruction() {
+  if (userLanguage.startsWith("da")) return "Answer in Danish.";
+  if (userLanguage.startsWith("tr")) return "Answer in Turkish.";
+  if (userLanguage.startsWith("de")) return "Answer in German.";
+  if (userLanguage.startsWith("fr")) return "Answer in French.";
+  if (userLanguage.startsWith("es")) return "Answer in Spanish.";
+  return "Answer in English.";
 }
 
-function getClearChatLabel() {
-  if (userLanguage.startsWith("da")) return "Ryd chat";
-  if (userLanguage.startsWith("tr")) return "Sohbeti temizle";
-  if (userLanguage.startsWith("de")) return "Chat löschen";
-  if (userLanguage.startsWith("fr")) return "Effacer le chat";
-  if (userLanguage.startsWith("es")) return "Borrar chat";
-  return "Clear Chat";
+function getChatPlaceholder() {
+  if (activeChatTool === "assignment") return userLanguage.startsWith("da") ? "Indsæt din opgave her..." : "Paste your assignment here...";
+  if (activeChatTool === "improve") return userLanguage.startsWith("da") ? "Indsæt din tekst her..." : "Paste your text here...";
+  if (activeChatTool === "feedback") return userLanguage.startsWith("da") ? "Indsæt din tekst og få feedback..." : "Paste your text and get feedback...";
+  if (activeChatTool === "math") return userLanguage.startsWith("da") ? "Indsæt din matematikopgave her..." : "Paste your math problem here...";
+  if (activeChatTool === "analyze") return userLanguage.startsWith("da") ? "Spørg om siden, teksten, videoen eller artiklen..." : "Ask about the page, text, video or article...";
+  return userLanguage.startsWith("da") ? "Skriv dit spørgsmål..." : "Ask anything...";
 }
 
 function getDeviceId() {
@@ -389,13 +268,62 @@ function saveHistory(mode, question, answer) {
   localStorage.setItem("instant_answer_history", JSON.stringify(history.slice(0, 20)));
 }
 
-function getLanguageInstruction() {
-  if (userLanguage.startsWith("da")) return "Answer in Danish.";
-  if (userLanguage.startsWith("tr")) return "Answer in Turkish.";
-  if (userLanguage.startsWith("de")) return "Answer in German.";
-  if (userLanguage.startsWith("fr")) return "Answer in French.";
-  if (userLanguage.startsWith("es")) return "Answer in Spanish.";
-  return "Answer in English.";
+function copyLastAnswer() {
+  const lastAnswer = getLastAssistantAnswer();
+
+  if (!lastAnswer) {
+    alert("No AI answer found yet.");
+    return;
+  }
+
+  navigator.clipboard.writeText(lastAnswer.content);
+}
+
+function downloadLastAnswerAsPDF() {
+  const lastAnswer = getLastAssistantAnswer();
+
+  if (!lastAnswer) {
+    alert("No AI answer found yet.");
+    return;
+  }
+
+  const conversation = getActiveConversation();
+  const date = new Date().toLocaleString();
+  const cleanTextForPdf = escapeHTML(lastAnswer.content).replace(/\n/g, "<br>");
+  const printWindow = window.open("", "_blank");
+
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>Instant Answer PDF</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 44px; line-height: 1.65; color: #111; background: white; }
+          .top { border-bottom: 1px solid #ddd; padding-bottom: 18px; margin-bottom: 24px; }
+          h1 { font-size: 26px; margin: 0 0 8px 0; }
+          .meta { font-size: 12px; color: #666; line-height: 1.6; }
+          .content { font-size: 14px; white-space: normal; }
+          .footer { border-top: 1px solid #ddd; margin-top: 40px; padding-top: 16px; font-size: 11px; color: #777; }
+          @media print { button { display: none; } }
+        </style>
+      </head>
+      <body>
+        <div class="top">
+          <h1>Instant Answer</h1>
+          <div class="meta">
+            Chat: ${escapeHTML(conversation.title || "New chat")}<br>
+            Tool: ${escapeHTML(activeChatTool)}<br>
+            Date: ${escapeHTML(date)}
+          </div>
+        </div>
+        <div class="content">${cleanTextForPdf}</div>
+        <div class="footer">Generated with Instant Answer</div>
+        <script>window.onload = function() { window.print(); };</script>
+      </body>
+    </html>
+  `);
+
+  printWindow.document.close();
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -406,7 +334,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   const chatBtn = document.getElementById("chatBtn");
   const result = document.getElementById("result");
   const proStatus = document.getElementById("proStatus");
-
   const historyBtn = document.getElementById("historyBtn");
   const clearHistoryBtn = document.getElementById("clearHistoryBtn");
 
@@ -414,10 +341,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   const languageInstruction = getLanguageInstruction();
 
   function setButtonsDisabled(value) {
-    quickBtn.disabled = value;
-    deepBtn.disabled = value;
-    studyBtn.disabled = value;
-    chatBtn.disabled = value;
+    [quickBtn, deepBtn, studyBtn, chatBtn].forEach(btn => {
+      if (btn) btn.disabled = value;
+    });
   }
 
   async function checkProStatus() {
@@ -430,9 +356,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       const data = await response.json();
 
-      if (data.pro) {
-        setProUser(true);
-      }
+      if (data.pro) setProUser(true);
     } catch (error) {
       console.error("Pro check failed", error);
     }
@@ -455,9 +379,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       <div class="pro-box">
         <div class="pro-label">LIMIT REACHED</div>
         <div class="pro-title">Upgrade to Pro</div>
-        <div class="pro-text">
-          You have used your 5 free answers today.
-        </div>
+        <div class="pro-text">You have used your 5 free answers today.</div>
         <div class="pro-features">
           Unlimited answers<br>
           Better summaries<br>
@@ -471,8 +393,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     `;
 
     document.getElementById("upgradeBtn").onclick = () => {
-      const checkoutUrl = `${PRO_LINK}?client_reference_id=${deviceId}`;
-      window.open(checkoutUrl, "_blank");
+      window.open(`${PRO_LINK}?client_reference_id=${deviceId}`, "_blank");
     };
   }
 
@@ -492,6 +413,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     `;
   }
 
+  function renderSources(sources = []) {
+    if (!Array.isArray(sources) || sources.length === 0) return "";
+
+    return `
+      <div style="margin-top:8px;padding:8px;border:1px solid #e5e5e5;border-radius:10px;background:#fafafa;">
+        <div style="font-size:11px;font-weight:900;color:#555;margin-bottom:5px;">Sources</div>
+        ${sources.slice(0, 4).map(source => `
+          <div style="font-size:11px;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            ${source.url
+              ? `<a href="${escapeHTML(source.url)}" target="_blank" style="color:#111;text-decoration:underline;">${escapeHTML(source.title || source.url)}</a>`
+              : `${escapeHTML(source.title || "Source")}`
+            }
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
   function renderConversationList() {
     if (chatConversations.length === 0) {
       return `<div style="font-size:12px;color:#777;">No chats yet.</div>`;
@@ -503,32 +442,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       return `
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
           <button class="oldChatBtn" data-id="${chat.id}" style="
-            flex:1;
-            text-align:left;
-            padding:8px 10px;
-            border-radius:10px;
+            flex:1;text-align:left;padding:8px 10px;border-radius:10px;
             border:${active ? "1px solid #111" : "1px solid #ddd"};
             background:${active ? "#111" : "#f7f7f7"};
             color:${active ? "white" : "#222"};
-            font-size:12px;
-            font-weight:700;
-            cursor:pointer;
-            overflow:hidden;
-            white-space:nowrap;
-            text-overflow:ellipsis;
-          ">
-            ${escapeHTML(chat.title || "New chat")}
-          </button>
+            font-size:12px;font-weight:700;cursor:pointer;
+            overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+          ">${escapeHTML(chat.title || "New chat")}</button>
 
           <button class="deleteChatBtn" data-id="${chat.id}" style="
-            width:34px;
-            height:34px;
-            border-radius:10px;
-            border:1px solid #ddd;
-            background:#fff;
-            color:#555;
-            cursor:pointer;
-            font-weight:900;
+            width:34px;height:34px;border-radius:10px;border:1px solid #ddd;
+            background:#fff;color:#555;cursor:pointer;font-weight:900;
           ">×</button>
         </div>
       `;
@@ -537,11 +461,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   function renderChatMessages() {
     if (chatMessages.length === 0) {
-      return `
-        <div style="color:#777;">
-          ${escapeHTML(getChatPlaceholder())}
-        </div>
-      `;
+      return `<div style="color:#777;">${escapeHTML(getChatPlaceholder())}</div>`;
     }
 
     return chatMessages.map((message, index) => {
@@ -549,15 +469,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         return `
           <div style="text-align:left;margin-bottom:8px;">
             <div style="
-              display:inline-block;
-              max-width:85%;
-              background:#f1f1f1;
-              color:#111;
-              padding:8px 10px;
-              border-radius:12px;
-              text-align:left;
+              display:inline-block;max-width:85%;background:#f1f1f1;color:#111;
+              padding:9px 11px;border-radius:12px;text-align:left;
             ">
-              ${escapeHTML(getThinkingLabel())}<span class="typingDots">...</span>
+              ${escapeHTML(getThinkingLabel())}
+              <span class="typingDots">
+                <span>.</span><span>.</span><span>.</span>
+              </span>
             </div>
           </div>
         `;
@@ -570,27 +488,18 @@ document.addEventListener("DOMContentLoaded", async () => {
       return `
         <div style="text-align:${align}; margin-bottom:8px;">
           <div style="
-            display:inline-block;
-            max-width:85%;
-            background:${bg};
-            color:${color};
-            padding:8px 10px;
-            border-radius:12px;
-            text-align:left;
+            display:inline-block;max-width:85%;background:${bg};color:${color};
+            padding:8px 10px;border-radius:12px;text-align:left;
           ">
             ${formatAnswer(message.content)}
+            ${message.role === "assistant" ? renderSources(message.sources) : ""}
           </div>
 
           ${message.role === "assistant" ? `
             <div style="margin-top:4px;text-align:left;">
               <button class="copySingleBtn" data-index="${index}" style="
-                border:none;
-                background:#f7f7f7;
-                color:#555;
-                font-size:11px;
-                cursor:pointer;
-                border-radius:8px;
-                padding:4px 8px;
+                border:none;background:#f7f7f7;color:#555;font-size:11px;
+                cursor:pointer;border-radius:8px;padding:4px 8px;
               ">Copy</button>
             </div>
           ` : ""}
@@ -603,6 +512,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     const activeConversation = getActiveConversation();
 
     result.innerHTML = `
+      <style>
+        .typingDots span {
+          animation: blink 1.2s infinite;
+          font-weight: 900;
+        }
+        .typingDots span:nth-child(2) { animation-delay: .2s; }
+        .typingDots span:nth-child(3) { animation-delay: .4s; }
+        @keyframes blink {
+          0%, 20% { opacity: .2; }
+          50% { opacity: 1; }
+          100% { opacity: .2; }
+        }
+      </style>
+
       <div class="answer-box">
         <div class="answer-label">CHAT</div>
         <div class="answer-title">Instant Answer Chat</div>
@@ -633,9 +556,11 @@ document.addEventListener("DOMContentLoaded", async () => {
           ${renderChatMessages()}
         </div>
 
-        <textarea id="chatInput" placeholder="${getChatPlaceholder()}" style="width:100%;height:90px;resize:none;box-sizing:border-box;border:1px solid #ddd;border-radius:12px;padding:10px;font-family:Arial,sans-serif;font-size:13px;outline:none;"></textarea>
+        <textarea id="chatInput" placeholder="${escapeHTML(getChatPlaceholder())}" style="width:100%;height:90px;resize:none;box-sizing:border-box;border:1px solid #ddd;border-radius:12px;padding:10px;font-family:Arial,sans-serif;font-size:13px;outline:none;"></textarea>
 
-        <button id="sendChatBtn" style="width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:linear-gradient(135deg,#000,#333);color:white;font-weight:bold;cursor:pointer;">${getSendLabel()}</button>
+        <button id="sendChatBtn" style="width:100%;margin-top:8px;padding:11px;border:none;border-radius:12px;background:linear-gradient(135deg,#000,#333);color:white;font-weight:bold;cursor:pointer;">
+          ${isGenerating ? getThinkingLabel() + "..." : getSendLabel()}
+        </button>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
           <button id="copyLastBtn" style="padding:10px;border:1px solid #ddd;border-radius:12px;background:#f7f7f7;color:#111;font-weight:bold;cursor:pointer;">Copy</button>
@@ -679,35 +604,15 @@ document.addEventListener("DOMContentLoaded", async () => {
       };
     });
 
-    document.getElementById("assignmentBtn").onclick = () => {
-      activeChatTool = "assignment";
-      openChat();
-    };
-
-    document.getElementById("improveBtn").onclick = () => {
-      activeChatTool = "improve";
-      openChat();
-    };
-
-    document.getElementById("feedbackBtn").onclick = () => {
-      activeChatTool = "feedback";
-      openChat();
-    };
-
-    document.getElementById("mathBtn").onclick = () => {
-      activeChatTool = "math";
-      openChat();
-    };
-
-    document.getElementById("analyzeBtn").onclick = () => {
-      activeChatTool = "analyze";
-      openChat();
-    };
-
-    document.getElementById("normalBtn").onclick = () => {
-      activeChatTool = "normal";
-      openChat();
-    };
+    ["assignment", "improve", "feedback", "math", "analyze", "normal"].forEach(tool => {
+      const btn = document.getElementById(`${tool}Btn`);
+      if (btn) {
+        btn.onclick = () => {
+          activeChatTool = tool;
+          openChat();
+        };
+      }
+    });
 
     document.getElementById("sendChatBtn").onclick = () => sendChatMessage();
     document.getElementById("copyLastBtn").onclick = copyLastAnswer;
@@ -720,7 +625,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     };
 
     const chatInput = document.getElementById("chatInput");
-    chatInput.addEventListener("keydown", (event) => {
+
+    chatInput.addEventListener("keydown", event => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         sendChatMessage();
@@ -735,77 +641,41 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (tool === "assignment") {
       return `
 Special mode: Assignment helper.
-
-You must:
-1. Explain what the assignment requires.
-2. Show how to start.
-3. Make a clear disposition/structure.
-4. Give example formulations.
-5. If the user asks for a full text, write a strong draft.
-6. If the assignment involves math, solve it step-by-step.
+Give structure, explanation, examples and a strong draft if needed.
 `;
     }
 
     if (tool === "improve") {
       return `
 Special mode: Improve text.
-
-You must:
-1. Correct mistakes.
-2. Improve the text.
-3. Make it sound more natural and human.
-4. Keep the original meaning.
-5. Explain briefly what was improved.
+Rewrite better, correct mistakes, keep meaning and explain improvements shortly.
 `;
     }
 
     if (tool === "feedback") {
       return `
 Special mode: Teacher feedback.
-
-You must:
-1. Explain what is good.
-2. Explain what is missing.
-3. Explain how it becomes better.
-4. Give concrete suggestions.
-5. Give a better version if useful.
+Explain strengths, weaknesses, improvements and give concrete examples.
 `;
     }
 
     if (tool === "math") {
       return `
 Special mode: Expert math tutor.
-
-You must:
-1. Solve math problems step-by-step.
-2. Show formulas clearly.
-3. Explain why each step is done.
-4. Check the final answer.
-5. Use simple language.
-6. If the user gives an equation, solve it fully.
-7. If the user gives a word problem, identify known values, unknown value, formula, calculation and answer.
-8. Do not skip steps.
+Solve step-by-step, show formulas, explain clearly and check the final answer.
 `;
     }
 
     if (tool === "analyze") {
       return `
 Special mode: Analyze page.
-
-Analyze the current page context:
-- YouTube: summarize, explain, make notes, identify key points.
-- Google: answer search query using visible results.
-- Reddit: summarize post and comments.
-- Article/essay/novel: summarize, analyze theme, message, structure, language and arguments.
+Use page context. Analyze YouTube, Google, Reddit, articles, essays, novels and webpages.
 `;
     }
 
     return `
 Special mode: Normal chat.
-
 Answer clearly and helpfully.
-If it is math, solve step-by-step.
-If it is school work, give structure and useful wording.
 `;
   }
 
@@ -822,27 +692,12 @@ You are Instant Answer Chat.
 Language rule:
 ${languageInstruction}
 
-You help with:
-- questions
-- homework
-- explanations
-- text improvement
-- structure
-- ideas
-- assignment help
-- teacher-style feedback
-- mathematics at expert tutor level
-- YouTube analysis
-- Google search analysis
-- Reddit analysis
-- article, essay, short story and novel analysis
-
 Current browser page context:
 Page type: ${currentPageType || "unknown"}
 Page label: ${currentPageLabel || "unknown"}
 
 Page content:
-${currentPageText || "No page context available."}
+${cleanText(currentPageText || "No page context available.", 14000)}
 
 Selected tool:
 ${activeChatTool}
@@ -851,7 +706,7 @@ Tool instructions:
 ${getToolPrompt(activeChatTool)}
 
 Chat so far:
-${chatContext}
+${cleanText(chatContext, 8000)}
 
 User's latest message:
 ${userMessage}
@@ -859,35 +714,33 @@ ${userMessage}
 Rules:
 - Answer exactly what the user asks.
 - Do the task, not just explain what to do.
-- If it is math, solve step-by-step with formulas and final answer.
-- If it is a school assignment, give structure, explanation and useful draft.
+- If it is math, solve step-by-step.
+- If it is school work, give structure and useful wording.
 - If the user asks about the current page, use the page context.
-- If the user asks to analyze an article, essay, novel or short story, include theme, message, structure, language and examples.
-- If the user asks to analyze YouTube, Google or Reddit, use the available page data.
+- If Google or Reddit context exists, use it intelligently.
 - Keep it clear, useful and human.
 `;
   }
 
   async function askBackend(userMessage, addUserMessage = true) {
+    if (isGenerating) return;
+
+    isGenerating = true;
+
     await checkProStatus();
     updateProStatus();
 
     if (hasReachedLimit()) {
+      isGenerating = false;
       showProBox();
       return;
     }
 
     if (addUserMessage) {
-      chatMessages.push({
-        role: "user",
-        content: userMessage
-      });
+      chatMessages.push({ role: "user", content: userMessage });
     }
 
-    chatMessages.push({
-      role: "loading",
-      content: getThinkingLabel()
-    });
+    chatMessages.push({ role: "loading", content: getThinkingLabel() });
 
     saveChatMessages();
     openChat();
@@ -895,8 +748,12 @@ Rules:
     try {
       const input = await buildChatInput(userMessage);
 
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 45000);
+
       const response = await fetch(ASK_URL, {
         method: "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           input,
@@ -905,6 +762,8 @@ Rules:
         })
       });
 
+      clearTimeout(timeout);
+
       const data = await response.json();
 
       chatMessages = chatMessages.filter(msg => msg.role !== "loading");
@@ -912,21 +771,19 @@ Rules:
       if (!response.ok || !data.answer) {
         chatMessages.push({
           role: "assistant",
-          content: "Could not get an AI answer right now."
+          content: data.answer || "Kunne ikke få et AI-svar lige nu. Prøv igen."
         });
 
         saveChatMessages();
-        openChat();
         return;
       }
 
-      if (data.pro) {
-        setProUser(true);
-      }
+      if (data.pro) setProUser(true);
 
       chatMessages.push({
         role: "assistant",
-        content: data.answer
+        content: data.answer,
+        sources: data.sources || []
       });
 
       saveChatMessages();
@@ -934,7 +791,6 @@ Rules:
       increaseUsage();
       updateProStatus();
       updatePageLabel();
-      openChat();
 
     } catch (error) {
       console.error(error);
@@ -943,10 +799,14 @@ Rules:
 
       chatMessages.push({
         role: "assistant",
-        content: "Could not connect to backend."
+        content: error.name === "AbortError"
+          ? "Svaret tog for lang tid. Prøv igen med et kortere spørgsmål."
+          : "Kunne ikke forbinde til backend. Prøv igen om lidt."
       });
 
       saveChatMessages();
+    } finally {
+      isGenerating = false;
       openChat();
     }
   }
@@ -955,13 +815,15 @@ Rules:
     const chatInput = document.getElementById("chatInput");
     const userMessage = chatInput.value.trim();
 
-    if (!userMessage) return;
+    if (!userMessage || isGenerating) return;
 
     chatInput.value = "";
     await askBackend(userMessage, true);
   }
 
   async function regenerateLastAnswer() {
+    if (isGenerating) return;
+
     const lastUser = getLastUserMessage();
 
     if (!lastUser) {
@@ -1027,7 +889,7 @@ Rules:
 
   chrome.scripting.executeScript(
     { target: { tabId: tab.id }, function: getPageInfo },
-    (results) => {
+    results => {
       const pageInfo = results?.[0]?.result;
 
       if (!pageInfo) {
@@ -1053,7 +915,16 @@ Rules:
   studyBtn.onclick = () => generateAnswer("study");
 
   async function generateAnswer(mode) {
-    result.innerHTML = `<div class="loading">AI is working...</div>`;
+    if (isGenerating) return;
+
+    isGenerating = true;
+
+    result.innerHTML = `
+      <div class="loading">
+        ${escapeHTML(getThinkingLabel())}<span class="typingDots"><span>.</span><span>.</span><span>.</span></span>
+      </div>
+    `;
+
     setButtonsDisabled(true);
 
     try {
@@ -1088,23 +959,24 @@ Mode:
 ${mode}
 
 Important:
-- Do not say "I can't interpret".
-- If the page content is short, explain the topic behind it.
-- If it is a search query, answer the search question directly.
-- If it is a school topic, explain it clearly.
+- Use the page context.
+- If it is Google, answer the search query using visible results.
+- If it is Reddit, summarize post, comments, opinions and useful warnings.
+- If it is YouTube, use title, description and comments.
+- If it is an article or school text, analyze clearly.
 - If it is math, solve step-by-step.
-- If it is Reddit, summarize the post and visible comments.
-- If it is YouTube, analyze title, description and comments.
-- If it is an article, essay, novel or short story, analyze it deeply.
-- Always give useful value.
-- Keep the answer clear and easy to understand.
+- Give useful value.
 
 Content:
-${currentPageText}
+${cleanText(currentPageText, 16000)}
 `;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 45000);
 
       const response = await fetch(ASK_URL, {
         method: "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           input: improvedInput,
@@ -1113,16 +985,16 @@ ${currentPageText}
         })
       });
 
+      clearTimeout(timeout);
+
       const data = await response.json();
 
       if (!response.ok || !data.answer) {
-        result.innerHTML = "Could not get an AI answer right now.";
+        result.innerHTML = data.answer || "Could not get an AI answer right now.";
         return;
       }
 
-      if (data.pro) {
-        setProUser(true);
-      }
+      if (data.pro) setProUser(true);
 
       saveHistory(mode, currentPageText, data.answer);
       increaseUsage();
@@ -1140,15 +1012,17 @@ ${currentPageText}
         <div class="answer-box">
           <div class="answer-label">${escapeHTML(mode.toUpperCase())}</div>
           <div class="answer-title">${title}</div>
-          <div class="answer-content">
-            ${formatAnswer(data.answer)}
-          </div>
+          <div class="answer-content">${formatAnswer(data.answer)}</div>
+          ${renderSources(data.sources || [])}
         </div>
       `;
     } catch (error) {
       console.error(error);
-      result.innerHTML = "Could not connect to backend. Make sure your server is running.";
+      result.innerHTML = error.name === "AbortError"
+        ? "The answer took too long. Try again with a shorter question."
+        : "Could not connect to backend. Make sure your server is running.";
     } finally {
+      isGenerating = false;
       setButtonsDisabled(false);
     }
   }
@@ -1157,8 +1031,8 @@ ${currentPageText}
 async function getPageInfo() {
   const url = window.location.href;
 
-  function clean(text = "", limit = 12000) {
-    return text
+  function clean(text = "", limit = 16000) {
+    return String(text || "")
       .replace(/\s+/g, " ")
       .replace(/Cookie|Accept all|Sign in|Log in/gi, "")
       .trim()
@@ -1182,7 +1056,7 @@ async function getPageInfo() {
       "";
 
     const comments = Array.from(document.querySelectorAll("#content-text"))
-      .slice(0, 12)
+      .slice(0, 15)
       .map(comment => comment.innerText)
       .join("\n\n");
 
@@ -1192,9 +1066,6 @@ async function getPageInfo() {
       text: `
 PAGE TYPE:
 YouTube video
-
-TASK HELP:
-The AI should summarize, explain, analyze, make notes, make study points and answer questions about this video based on available page context.
 
 VIDEO TITLE:
 ${clean(title)}
@@ -1233,9 +1104,6 @@ ${clean(comments || "No visible comments found.")}
 PAGE TYPE:
 Google search results
 
-TASK HELP:
-The AI should answer the search query directly using visible results. It should compare results, explain the topic and give a clear useful answer.
-
 SEARCH QUERY:
 ${clean(query)}
 
@@ -1257,7 +1125,7 @@ ${clean(results || "No visible results found.")}
       "";
 
     const comments = Array.from(document.querySelectorAll('[data-testid="comment"], shreddit-comment'))
-      .slice(0, 12)
+      .slice(0, 15)
       .map(comment => comment.innerText)
       .join("\n\n");
 
@@ -1267,9 +1135,6 @@ ${clean(results || "No visible results found.")}
       text: `
 PAGE TYPE:
 Reddit discussion
-
-TASK HELP:
-The AI should summarize the post, explain the discussion, identify opinions, arguments, advice and key points from visible comments.
 
 POST TITLE:
 ${clean(title)}
@@ -1305,9 +1170,6 @@ ${clean(comments || "No comments found.")}
     text: `
 PAGE TYPE:
 Article / webpage / school text
-
-TASK HELP:
-The AI should summarize, analyze, explain, make notes, answer questions, help with essays, analyze articles, novels, short stories, arguments, themes, language, structure and message. If it contains math, the AI should solve it step-by-step like an expert math tutor.
 
 PAGE TITLE:
 ${clean(pageTitle)}
