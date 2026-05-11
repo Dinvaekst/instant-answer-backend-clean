@@ -24,9 +24,7 @@ function isProUser(deviceId) {
 }
 
 function cleanText(text = "") {
-  return String(text)
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(text).replace(/\s+/g, " ").trim();
 }
 
 function limitText(text = "", max = 12000) {
@@ -39,15 +37,12 @@ function extractLatestUserMessage(input = "") {
   const text = String(input || "");
 
   const latestMatch = text.match(/User's latest message:\s*([\s\S]*?)(?:\n\nRules:|\nRules:|$)/i);
-  if (latestMatch?.[1]) return cleanText(latestMatch[1]).slice(0, 500);
+  if (latestMatch?.[1]) return cleanText(latestMatch[1]).slice(0, 700);
 
   const searchMatch = text.match(/SEARCH QUERY:\s*([\s\S]*?)(?:\n\nVISIBLE RESULTS:|\nVISIBLE RESULTS:|$)/i);
-  if (searchMatch?.[1]) return cleanText(searchMatch[1]).slice(0, 500);
+  if (searchMatch?.[1]) return cleanText(searchMatch[1]).slice(0, 700);
 
-  const googleMatch = text.match(/Google search query:\s*([\s\S]*?)(?:\n|$)/i);
-  if (googleMatch?.[1]) return cleanText(googleMatch[1]).slice(0, 500);
-
-  return cleanText(text).slice(0, 500);
+  return cleanText(text).slice(0, 700);
 }
 
 function detectPageType(input = "") {
@@ -61,39 +56,39 @@ function detectPageType(input = "") {
   return "normal";
 }
 
+function isMathRequest(input = "", mode = "") {
+  const text = input.toLowerCase();
+
+  const mathWords = [
+    "solve", "equation", "calculate", "graph", "formula", "latex",
+    "differentiate", "derivative", "integral", "factor", "expand",
+    "function", "parabola", "linear", "quadratic", "matrix",
+    "ligning", "beregn", "udregn", "funktion", "graf", "formel",
+    "differential", "integral", "afledte", "gymnasie", "matematik",
+    "procent", "sandsynlighed", "statistik", "trigonometri"
+  ];
+
+  const symbols = /[=+\-*/^√π∫Σ()]/.test(text);
+  const hasNumbers = /\d/.test(text);
+
+  return mode === "math" || mathWords.some(word => text.includes(word)) || (symbols && hasNumbers);
+}
+
 function shouldUseWebSearch(input = "", mode = "chat") {
   const text = input.toLowerCase();
   const pageType = detectPageType(input);
 
   if (pageType === "google") return true;
+  if (isMathRequest(input, mode)) return false;
 
   const searchTriggers = [
-    "søg",
-    "search",
-    "google",
-    "find information",
-    "find info",
-    "nyeste",
-    "latest",
-    "aktuel",
-    "current",
-    "i dag",
-    "today",
-    "nyheder",
-    "news",
-    "pris",
-    "price",
-    "hvem er",
-    "who is",
-    "hvornår",
-    "when",
-    "opdateret",
-    "updated",
-    "2025",
-    "2026"
+    "søg", "search", "google", "find information", "find info",
+    "nyeste", "latest", "aktuel", "current", "i dag", "today",
+    "nyheder", "news", "pris", "price", "hvem er", "who is",
+    "hvornår", "when", "opdateret", "updated", "2025", "2026"
   ];
 
-  return searchTriggers.some((word) => text.includes(word));
+  return searchTriggers.some(word => text.includes(word));
 }
 
 async function searchWeb(query, isPro) {
@@ -139,18 +134,15 @@ async function searchWeb(query, isPro) {
         }))
       : [];
 
-    const sourceText = sources
-      .map(
-        (source) => `
+    const sourceText = sources.map(source => `
 Source ${source.number}
 Title: ${source.title}
 URL: ${source.url}
 Content: ${limitText(source.content, 1000)}
-`
-      )
-      .join("\n");
+`).join("\n");
 
-    const text = `
+    return {
+      text: `
 WEB SEARCH RESULTS
 
 Query:
@@ -161,27 +153,144 @@ ${data.answer || "No direct answer"}
 
 Sources:
 ${sourceText}
-
-Rules:
-- Use these sources when they answer the user.
-- Mention source titles when useful.
-- Do not invent sources.
-`;
-
-    return { text, sources };
+`,
+      sources
+    };
   } catch (error) {
     console.error("Tavily error:", error.message);
     return { text: "", sources: [] };
   }
 }
 
-function buildPrompt(mode, input, isPro, pageType) {
-  const plan = isPro ? "PRO" : "FREE";
+async function askWolframAlpha(query) {
+  if (!process.env.WOLFRAM_APP_ID) {
+    return { text: "", sources: [] };
+  }
+
+  if (!query || query.length < 2) {
+    return { text: "", sources: [] };
+  }
+
+  try {
+    const url =
+      `https://api.wolframalpha.com/v2/query?appid=${process.env.WOLFRAM_APP_ID}` +
+      `&input=${encodeURIComponent(query)}` +
+      `&output=json&format=plaintext`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 9000);
+
+    const response = await fetch(url, { signal: controller.signal });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      console.error("Wolfram failed:", response.status);
+      return { text: "", sources: [] };
+    }
+
+    const data = await response.json();
+    const pods = data?.queryresult?.pods || [];
+
+    const usefulPods = pods
+      .map(pod => {
+        const values = (pod.subpods || [])
+          .map(subpod => subpod.plaintext)
+          .filter(Boolean)
+          .join("\n");
+
+        if (!values) return null;
+
+        return `${pod.title}:\n${values}`;
+      })
+      .filter(Boolean)
+      .slice(0, 8);
+
+    if (usefulPods.length === 0) {
+      return { text: "", sources: [] };
+    }
+
+    return {
+      text: `
+WOLFRAMALPHA MATH VALIDATION
+
+Query:
+${query}
+
+Results:
+${usefulPods.join("\n\n")}
+
+Rules:
+- Use this to validate calculations.
+- If Wolfram gives a result, compare it with your own reasoning.
+- Still explain step-by-step like a teacher.
+`,
+      sources: [
+        {
+          title: "WolframAlpha calculation",
+          url: "https://www.wolframalpha.com/"
+        }
+      ]
+    };
+  } catch (error) {
+    console.error("Wolfram error:", error.message);
+    return { text: "", sources: [] };
+  }
+}
+
+function buildMathPrompt(input, isPro, wolframText = "") {
+  return `
+You are Instant Answer Math, an expert math teacher inside a browser extension.
+
+User plan: ${isPro ? "PRO" : "FREE"}
+
+Main goal:
+Build the best browser math helper for students.
+
+Math rules:
+- Understand equations, functions, word problems and gymnasium-level math.
+- Solve step-by-step.
+- Explain like a teacher.
+- Use simple language.
+- Always identify what is given and what must be found.
+- Show formulas before using them.
+- Use clean LaTeX for formulas.
+- Put important formulas in LaTeX using \\( ... \\) or \\[ ... \\].
+- Check the final answer.
+- If there are multiple methods, choose the simplest one first.
+- If the problem is unclear, make the most reasonable assumption and say it shortly.
+- Do not skip algebra steps.
+- For word problems: write "Given", "Find", "Formula", "Calculation", "Answer".
+- For graph questions: describe shape, intersections, slope, vertex and important points.
+- For validation: compare your result with WolframAlpha if included.
+
+Output format:
+1. Short answer
+2. Step-by-step solution
+3. Formula / LaTeX
+4. Final answer
+5. Check
+
+If graph data is useful, include a small graph instruction like:
+GRAPH:
+y = expression
+
+${wolframText}
+
+User input:
+${limitText(input, isPro ? 24000 : 14000)}
+`;
+}
+
+function buildPrompt(mode, input, isPro, pageType, wolframText = "") {
+  if (isMathRequest(input, mode)) {
+    return buildMathPrompt(input, isPro, wolframText);
+  }
 
   return `
 You are Instant Answer.
 
-User plan: ${plan}
+User plan: ${isPro ? "PRO" : "FREE"}
 Mode: ${mode}
 Page type: ${pageType}
 
@@ -213,6 +322,7 @@ ${limitText(input, isPro ? 24000 : 14000)}
 function getMaxTokens(mode, isPro) {
   if (isPro) {
     if (mode === "quick") return 700;
+    if (mode === "math") return 4200;
     if (mode === "assignment") return 4000;
     if (mode === "study") return 3800;
     if (mode === "deep") return 3800;
@@ -220,6 +330,7 @@ function getMaxTokens(mode, isPro) {
   }
 
   if (mode === "quick") return 300;
+  if (mode === "math") return 1700;
   if (mode === "assignment") return 1400;
   if (mode === "study") return 1400;
   if (mode === "deep") return 1400;
@@ -229,7 +340,8 @@ function getMaxTokens(mode, isPro) {
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
-    message: "Instant Answer backend is running"
+    message: "Instant Answer backend is running",
+    version: "1.4-math-upgrade"
   });
 });
 
@@ -305,25 +417,32 @@ app.post("/ask", async (req, res) => {
     const isPro = isProUser(deviceId);
     const pageType = detectPageType(input);
     const latestMessage = extractLatestUserMessage(input);
+
+    const mathMode = isMathRequest(input, mode);
     const useSearch = shouldUseWebSearch(input, mode);
 
     const web = useSearch ? await searchWeb(latestMessage, isPro) : { text: "", sources: [] };
+    const wolfram = mathMode ? await askWolframAlpha(latestMessage) : { text: "", sources: [] };
 
-    const finalInput = web.text
-      ? `${input}\n\n${web.text}`
-      : input;
+    const finalInput = `
+${input}
 
-    const prompt = buildPrompt(mode, finalInput, isPro, pageType);
+${web.text ? web.text : ""}
+
+${wolfram.text ? wolfram.text : ""}
+`;
+
+    const prompt = buildPrompt(mode, finalInput, isPro, pageType, wolfram.text);
 
     const completion = await openai.chat.completions.create({
       model: isPro ? "gpt-4o" : "gpt-4o-mini",
-      temperature: isPro ? 0.2 : 0.3,
-      max_tokens: getMaxTokens(mode, isPro),
+      temperature: mathMode ? 0.1 : isPro ? 0.2 : 0.3,
+      max_tokens: getMaxTokens(mathMode ? "math" : mode, isPro),
       messages: [
         {
           role: "system",
           content:
-            "You are Instant Answer, a fast premium AI assistant inside a Chrome extension. Be accurate, direct, helpful and stable."
+            "You are Instant Answer, a fast premium AI assistant inside a Chrome extension. For math, act like a precise teacher: solve step-by-step, use LaTeX, validate calculations, and explain clearly."
         },
         {
           role: "user",
@@ -340,11 +459,16 @@ app.post("/ask", async (req, res) => {
       answer,
       pro: isPro,
       usedSearch: Boolean(web.text),
+      usedWolfram: Boolean(wolfram.text),
+      mathMode,
       pageType,
-      sources: web.sources.map((source) => ({
-        title: source.title,
-        url: source.url
-      }))
+      sources: [
+        ...web.sources.map(source => ({
+          title: source.title,
+          url: source.url
+        })),
+        ...wolfram.sources
+      ]
     });
   } catch (error) {
     console.error("Ask error:", error);

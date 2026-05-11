@@ -141,12 +141,78 @@ function escapeHTML(text = "") {
     .replaceAll("'", "&#039;");
 }
 
-function formatAnswer(text = "") {
-  return escapeHTML(text).replace(/\n/g, "<br>");
-}
-
 function cleanText(text = "", limit = 16000) {
   return String(text || "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function containsMath(text = "") {
+  const value = String(text || "").toLowerCase();
+
+  const mathWords = [
+    "ligning", "funktion", "graf", "formel", "beregn", "udregn",
+    "afledte", "differential", "integral", "procent", "sandsynlighed",
+    "statistik", "trigonometri", "solve", "equation", "graph",
+    "formula", "calculate", "derivative", "integral", "latex"
+  ];
+
+  return mathWords.some(word => value.includes(word)) || /[=+\-*/^√π∫Σ]/.test(value);
+}
+
+function formatMathExpression(expr = "") {
+  return escapeHTML(expr)
+    .replace(/\^2/g, "²")
+    .replace(/\^3/g, "³")
+    .replace(/sqrt\((.*?)\)/gi, "√($1)")
+    .replace(/\\frac\{(.*?)\}\{(.*?)\}/g, "($1)/($2)");
+}
+
+function extractGraphExpression(text = "") {
+  const match = text.match(/GRAPH:\s*([\s\S]*?)(?:\n\n|$)/i);
+  if (!match?.[1]) return "";
+
+  return match[1]
+    .split("\n")[0]
+    .replace(/`/g, "")
+    .trim();
+}
+
+function createGraphUrl(expression = "") {
+  if (!expression) return "";
+
+  const clean = expression
+    .replace(/^y\s*=/i, "")
+    .replace(/^f\(x\)\s*=/i, "")
+    .trim();
+
+  if (!clean) return "";
+
+  const encoded = encodeURIComponent(`y=${clean}`);
+  return `https://www.desmos.com/calculator?expression=${encoded}`;
+}
+
+function formatAnswer(text = "") {
+  let safe = escapeHTML(text);
+
+  safe = safe.replace(/```([\s\S]*?)```/g, (_, code) => {
+    return `
+      <div class="math-code-block">
+        <button class="copyFormulaBtn" data-formula="${escapeHTML(code.trim())}">Copy</button>
+        <pre>${escapeHTML(code.trim())}</pre>
+      </div>
+    `;
+  });
+
+  safe = safe.replace(/\\\[(.*?)\\\]/gs, (_, formula) => {
+    return `<div class="math-formula-block">${formatMathExpression(formula)}</div>`;
+  });
+
+  safe = safe.replace(/\\\((.*?)\\\)/gs, (_, formula) => {
+    return `<span class="math-inline">${formatMathExpression(formula)}</span>`;
+  });
+
+  safe = safe.replace(/\n/g, "<br>");
+
+  return safe;
 }
 
 function getLastAssistantAnswer() {
@@ -193,6 +259,21 @@ function getSendLabel() {
   return "Send";
 }
 
+function getTeacherLabel() {
+  if (userLanguage.startsWith("da")) return "Forklar som lærer";
+  return "Explain like teacher";
+}
+
+function getSmartCalcLabel() {
+  if (userLanguage.startsWith("da")) return "Smart beregning";
+  return "Smart calculation";
+}
+
+function getGraphLabel() {
+  if (userLanguage.startsWith("da")) return "Åbn graf";
+  return "Open graph";
+}
+
 function getLanguageInstruction() {
   if (userLanguage.startsWith("da")) return "Answer in Danish.";
   if (userLanguage.startsWith("tr")) return "Answer in Turkish.";
@@ -206,7 +287,7 @@ function getChatPlaceholder() {
   if (activeChatTool === "assignment") return userLanguage.startsWith("da") ? "Indsæt din opgave her..." : "Paste your assignment here...";
   if (activeChatTool === "improve") return userLanguage.startsWith("da") ? "Indsæt din tekst her..." : "Paste your text here...";
   if (activeChatTool === "feedback") return userLanguage.startsWith("da") ? "Indsæt din tekst og få feedback..." : "Paste your text and get feedback...";
-  if (activeChatTool === "math") return userLanguage.startsWith("da") ? "Indsæt din matematikopgave her..." : "Paste your math problem here...";
+  if (activeChatTool === "math") return userLanguage.startsWith("da") ? "Indsæt ligning, funktion eller matematikopgave her..." : "Paste equation, function or math problem here...";
   if (activeChatTool === "analyze") return userLanguage.startsWith("da") ? "Spørg om siden, teksten, videoen eller artiklen..." : "Ask about the page, text, video or article...";
   return userLanguage.startsWith("da") ? "Skriv dit spørgsmål..." : "Ask anything...";
 }
@@ -289,7 +370,7 @@ function downloadLastAnswerAsPDF() {
 
   const conversation = getActiveConversation();
   const date = new Date().toLocaleString();
-  const cleanTextForPdf = escapeHTML(lastAnswer.content).replace(/\n/g, "<br>");
+  const cleanTextForPdf = formatAnswer(lastAnswer.content);
   const printWindow = window.open("", "_blank");
 
   printWindow.document.write(`
@@ -303,6 +384,7 @@ function downloadLastAnswerAsPDF() {
           h1 { font-size: 26px; margin: 0 0 8px 0; }
           .meta { font-size: 12px; color: #666; line-height: 1.6; }
           .content { font-size: 14px; white-space: normal; }
+          .math-formula-block { background:#f7f7f7;border:1px solid #ddd;border-radius:10px;padding:10px;margin:10px 0;font-weight:bold; }
           .footer { border-top: 1px solid #ddd; margin-top: 40px; padding-top: 16px; font-size: 11px; color: #777; }
           @media print { button { display: none; } }
         </style>
@@ -431,6 +513,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     `;
   }
 
+  function renderMathActions(message) {
+    if (!message || message.role !== "assistant") return "";
+
+    const isMath = message.mathMode || containsMath(message.content || "");
+    if (!isMath) return "";
+
+    const graphExpression = extractGraphExpression(message.content || "");
+    const graphUrl = createGraphUrl(graphExpression);
+
+    return `
+      <div class="math-action-row">
+        <button class="teacherExplainBtn">${getTeacherLabel()}</button>
+        <button class="smartCalcBtn">${getSmartCalcLabel()}</button>
+        ${graphUrl ? `<button class="openGraphBtn" data-url="${escapeHTML(graphUrl)}">${getGraphLabel()}</button>` : ""}
+      </div>
+    `;
+  }
+
   function renderConversationList() {
     if (chatConversations.length === 0) {
       return `<div style="font-size:12px;color:#777;">No chats yet.</div>`;
@@ -493,6 +593,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           ">
             ${formatAnswer(message.content)}
             ${message.role === "assistant" ? renderSources(message.sources) : ""}
+            ${message.role === "assistant" ? renderMathActions(message) : ""}
           </div>
 
           ${message.role === "assistant" ? `
@@ -523,6 +624,63 @@ document.addEventListener("DOMContentLoaded", async () => {
           0%, 20% { opacity: .2; }
           50% { opacity: 1; }
           100% { opacity: .2; }
+        }
+        .math-formula-block {
+          background: #fff;
+          border: 1px solid #ddd;
+          border-radius: 12px;
+          padding: 10px;
+          margin: 8px 0;
+          font-weight: 900;
+          overflow-x: auto;
+        }
+        .math-inline {
+          background: rgba(255,255,255,.8);
+          border: 1px solid #ddd;
+          border-radius: 6px;
+          padding: 1px 5px;
+          font-weight: 800;
+        }
+        .math-code-block {
+          background: #fff;
+          border: 1px solid #ddd;
+          border-radius: 12px;
+          padding: 8px;
+          margin: 8px 0;
+          position: relative;
+        }
+        .math-code-block pre {
+          margin: 0;
+          white-space: pre-wrap;
+          font-size: 12px;
+        }
+        .copyFormulaBtn {
+          position: absolute;
+          top: 6px;
+          right: 6px;
+          border: none;
+          background: #111;
+          color: white;
+          border-radius: 8px;
+          padding: 3px 7px;
+          font-size: 10px;
+          cursor: pointer;
+        }
+        .math-action-row {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 6px;
+          margin-top: 8px;
+        }
+        .math-action-row button {
+          border: 1px solid #ddd;
+          background: white;
+          color: #111;
+          border-radius: 10px;
+          padding: 7px;
+          font-size: 11px;
+          font-weight: 900;
+          cursor: pointer;
         }
       </style>
 
@@ -604,6 +762,36 @@ document.addEventListener("DOMContentLoaded", async () => {
       };
     });
 
+    document.querySelectorAll(".copyFormulaBtn").forEach(btn => {
+      btn.onclick = () => {
+        navigator.clipboard.writeText(btn.dataset.formula || "");
+      };
+    });
+
+    document.querySelectorAll(".openGraphBtn").forEach(btn => {
+      btn.onclick = () => {
+        window.open(btn.dataset.url, "_blank");
+      };
+    });
+
+    document.querySelectorAll(".teacherExplainBtn").forEach(btn => {
+      btn.onclick = () => {
+        const lastUser = getLastUserMessage();
+        if (lastUser) {
+          askBackend(`Forklar denne matematikopgave som en lærer, meget simpelt og trin-for-trin: ${lastUser.content}`, true);
+        }
+      };
+    });
+
+    document.querySelectorAll(".smartCalcBtn").forEach(btn => {
+      btn.onclick = () => {
+        const lastUser = getLastUserMessage();
+        if (lastUser) {
+          askBackend(`Lav smart beregning og valider resultatet. Vis kun den mest præcise løsning trin-for-trin: ${lastUser.content}`, true);
+        }
+      };
+    });
+
     ["assignment", "improve", "feedback", "math", "analyze", "normal"].forEach(tool => {
       const btn = document.getElementById(`${tool}Btn`);
       if (btn) {
@@ -642,6 +830,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       return `
 Special mode: Assignment helper.
 Give structure, explanation, examples and a strong draft if needed.
+If math appears, solve step-by-step and use formulas.
 `;
     }
 
@@ -662,7 +851,18 @@ Explain strengths, weaknesses, improvements and give concrete examples.
     if (tool === "math") {
       return `
 Special mode: Expert math tutor.
-Solve step-by-step, show formulas, explain clearly and check the final answer.
+
+You must:
+- Solve step-by-step.
+- Explain like a teacher.
+- Use LaTeX formulas with \\( ... \\) or \\[ ... \\].
+- Identify given values and what must be found.
+- For word problems use: Given, Find, Formula, Calculation, Answer.
+- For equations show each algebra step.
+- For functions explain graph, zero points, slope, vertex and intersections.
+- If graph is useful, end with:
+GRAPH:
+y = expression
 `;
     }
 
@@ -670,12 +870,14 @@ Solve step-by-step, show formulas, explain clearly and check the final answer.
       return `
 Special mode: Analyze page.
 Use page context. Analyze YouTube, Google, Reddit, articles, essays, novels and webpages.
+If math appears on the page, solve it step-by-step.
 `;
     }
 
     return `
 Special mode: Normal chat.
 Answer clearly and helpfully.
+If math appears, solve step-by-step with formulas.
 `;
   }
 
@@ -714,10 +916,14 @@ ${userMessage}
 Rules:
 - Answer exactly what the user asks.
 - Do the task, not just explain what to do.
-- If it is math, solve step-by-step.
+- If it is math, solve step-by-step with formulas.
+- If it is an equation, show each algebra step.
+- If it is a word problem, identify given values, formula, calculation and final answer.
+- If graph is useful, include:
+GRAPH:
+y = expression
 - If it is school work, give structure and useful wording.
 - If the user asks about the current page, use the page context.
-- If Google or Reddit context exists, use it intelligently.
 - Keep it clear, useful and human.
 `;
   }
@@ -783,7 +989,9 @@ Rules:
       chatMessages.push({
         role: "assistant",
         content: data.answer,
-        sources: data.sources || []
+        sources: data.sources || [],
+        mathMode: data.mathMode || false,
+        usedWolfram: data.usedWolfram || false
       });
 
       saveChatMessages();
@@ -964,8 +1172,10 @@ Important:
 - If it is Reddit, summarize post, comments, opinions and useful warnings.
 - If it is YouTube, use title, description and comments.
 - If it is an article or school text, analyze clearly.
-- If it is math, solve step-by-step.
-- Give useful value.
+- If it is math, solve step-by-step with formulas and LaTeX.
+- If graph is useful, include:
+GRAPH:
+y = expression
 
 Content:
 ${cleanText(currentPageText, 16000)}
@@ -1008,14 +1218,30 @@ ${cleanText(currentPageText, 16000)}
           ? "AI Overview"
           : "Study Help";
 
+      const graphExpression = extractGraphExpression(data.answer);
+      const graphUrl = createGraphUrl(graphExpression);
+
       result.innerHTML = `
         <div class="answer-box">
           <div class="answer-label">${escapeHTML(mode.toUpperCase())}</div>
           <div class="answer-title">${title}</div>
           <div class="answer-content">${formatAnswer(data.answer)}</div>
           ${renderSources(data.sources || [])}
+          ${data.mathMode || containsMath(data.answer) ? `
+            <div class="math-action-row">
+              ${graphUrl ? `<button class="openGraphBtn" data-url="${escapeHTML(graphUrl)}">${getGraphLabel()}</button>` : ""}
+            </div>
+          ` : ""}
         </div>
       `;
+
+      document.querySelectorAll(".openGraphBtn").forEach(btn => {
+        btn.onclick = () => window.open(btn.dataset.url, "_blank");
+      });
+
+      document.querySelectorAll(".copyFormulaBtn").forEach(btn => {
+        btn.onclick = () => navigator.clipboard.writeText(btn.dataset.formula || "");
+      });
     } catch (error) {
       console.error(error);
       result.innerHTML = error.name === "AbortError"
